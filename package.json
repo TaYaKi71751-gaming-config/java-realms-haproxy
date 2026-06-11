@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "minecraft-protocol": "^1.66.2",
+    "mineflayer": "^4.37.1",
+    "prismarine-auth": "^3.1.1",
+    "prismarine-realms": "^1.6.0"
+  }
+}
