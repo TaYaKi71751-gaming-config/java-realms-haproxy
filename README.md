@@ -29,3 +29,7 @@ HAProxy when it changes, then connects through `127.0.0.1:25565`.
 
 Use `/pos` to show the latest server position packet and `/quit` to disconnect.
 Chat is disabled until its protocol `775` packet layout is available.
+
+Kicks, server disconnect packets, and protocol errors exit with status `1`.
+Unexpected socket closures reconnect automatically. A process manager such as
+PM2 may restart the process after it exits, depending on its configuration.

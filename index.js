@@ -32,6 +32,7 @@ const reconnectDelay = parseInteger(
   'RECONNECT_DELAY_MS',
   Number.MAX_SAFE_INTEGER
 )
+const FAILURE_EXIT_TIMEOUT_MS = 2000
 
 if (!username) {
   console.error('BOT_EMAIL is required. Set it in .env.')
@@ -47,6 +48,8 @@ let reconnectAttempts = 0
 let sentPlayerLoaded = false
 let selectedRealm
 let configuredTarget
+let exitAfterDisconnect = false
+let failureExitTimer
 
 function connect() {
   console.log('Resolving Java Realm endpoint and preparing HAProxy...')
@@ -171,6 +174,11 @@ function createProtocolClient() {
     if (connectedFor >= 120000) reconnectAttempts = 0
     connectedAt = undefined
     client = undefined
+    if (exitAfterDisconnect) {
+      clearTimeout(failureExitTimer)
+      console.log('Exiting process after connection failure.')
+      process.exit(1)
+    }
     if (!shuttingDown) scheduleReconnect()
   })
 }
@@ -263,11 +271,18 @@ function getLastTarget() {
 function stopAfterFailure(currentClient, reason) {
   if (client !== currentClient) return
 
-  console.log(`Automatic reconnect disabled after ${reason}`)
+  console.log(`Stopping process after ${reason}`)
   shuttingDown = true
+  exitAfterDisconnect = true
   clearTimeout(reconnectTimer)
   reconnectTimer = undefined
   terminal.close()
+
+  failureExitTimer = setTimeout(() => {
+    console.error('Client did not close cleanly; forcing process exit.')
+    process.exit(1)
+  }, FAILURE_EXIT_TIMEOUT_MS)
+
   if (!currentClient.ended) currentClient.end(reason)
 }
 
