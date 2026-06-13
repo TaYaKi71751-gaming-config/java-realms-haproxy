@@ -6,6 +6,7 @@ const decodedPlayPackets = new Set([
   'kick_disconnect',
   'keep_alive',
   'login',
+  'death_combat_event',
   'position',
   'start_configuration'
 ])

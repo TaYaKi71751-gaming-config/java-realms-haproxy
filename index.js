@@ -40,6 +40,12 @@ const sleepClickInterval = parseInteger(
   'SLEEP_CLICK_INTERVAL_MS',
   Number.MAX_SAFE_INTEGER
 )
+const respawnDelay = parseInteger(
+  process.env.RESPAWN_DELAY_MS,
+  500,
+  'RESPAWN_DELAY_MS',
+  Number.MAX_SAFE_INTEGER
+)
 const FAILURE_EXIT_TIMEOUT_MS = 2000
 
 if (!username) {
@@ -59,6 +65,8 @@ let configuredTarget
 let exitAfterDisconnect = false
 let failureExitTimer
 let sleepClickTimer
+let respawnTimer
+let awaitingRespawn = false
 let interactionSequence = 0
 
 function installTimestampedConsole() {
@@ -95,6 +103,9 @@ function createProtocolClient() {
   sentPlayerLoaded = false
   position = undefined
   stopSleepClicks()
+  clearTimeout(respawnTimer)
+  respawnTimer = undefined
+  awaitingRespawn = false
   interactionSequence = 0
 
   const options = {
@@ -165,12 +176,29 @@ function createProtocolClient() {
 
   currentClient.on('position', (packet) => {
     position = updatePosition(position, packet)
+    awaitingRespawn = false
     currentClient.write('teleport_confirm', { teleportId: packet.teleportId })
     if (!sentPlayerLoaded) {
       sentPlayerLoaded = true
       currentClient.writeRaw(Buffer.from([0x2c]))
     }
     tryAutoSleep(currentClient)
+  })
+
+  currentClient.on('death_combat_event', (packet) => {
+    if (awaitingRespawn) return
+
+    awaitingRespawn = true
+    position = undefined
+    stopSleepClicks()
+    console.log(`Player died: ${formatComponent(packet.message)}. Respawning...`)
+
+    respawnTimer = setTimeout(() => {
+      respawnTimer = undefined
+      if (client !== currentClient || currentClient.ended) return
+      currentClient.write('client_command', { actionId: 0 })
+      console.log('Sent automatic respawn request.')
+    }, respawnDelay)
   })
 
   currentClient.on('protocol_775_chunk_batch_finished', () => {
@@ -214,6 +242,8 @@ function createProtocolClient() {
     connectedAt = undefined
     client = undefined
     stopSleepClicks()
+    clearTimeout(respawnTimer)
+    respawnTimer = undefined
     if (exitAfterDisconnect) {
       clearTimeout(failureExitTimer)
       console.log('Exiting process after connection failure.')
@@ -389,6 +419,8 @@ function stopAfterFailure(currentClient, reason) {
   clearTimeout(reconnectTimer)
   reconnectTimer = undefined
   stopSleepClicks()
+  clearTimeout(respawnTimer)
+  respawnTimer = undefined
   terminal.close()
 
   failureExitTimer = setTimeout(() => {
@@ -503,6 +535,7 @@ function shutdown() {
   shuttingDown = true
   clearTimeout(reconnectTimer)
   stopSleepClicks()
+  clearTimeout(respawnTimer)
   terminal.close()
   client?.end('Bot shutting down')
 }

@@ -39,3 +39,6 @@ All console output includes a local timestamp and UTC offset.
 Whenever connected, the bot looks straight down and repeatedly right-clicks
 the block directly under its feet. Set `SLEEP_CLICK_INTERVAL_MS` to control the
 interval; the default is one second.
+
+When the bot dies, it automatically requests respawn after 500 milliseconds.
+Set `RESPAWN_DELAY_MS` to change the delay.
