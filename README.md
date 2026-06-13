@@ -33,3 +33,5 @@ Chat is disabled until its protocol `775` packet layout is available.
 Kicks, server disconnect packets, and protocol errors exit with status `1`.
 Unexpected socket closures reconnect automatically. A process manager such as
 PM2 may restart the process after it exits, depending on its configuration.
+
+All console output includes a local timestamp and UTC offset.

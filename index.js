@@ -1,5 +1,7 @@
 'use strict'
 
+installTimestampedConsole()
+
 const fs = require('node:fs')
 const net = require('node:net')
 const path = require('node:path')
@@ -50,6 +52,31 @@ let selectedRealm
 let configuredTarget
 let exitAfterDisconnect = false
 let failureExitTimer
+
+function installTimestampedConsole() {
+  for (const method of ['log', 'info', 'warn', 'error', 'debug']) {
+    const original = console[method].bind(console)
+    console[method] = (...args) => original(`[${formatTimestamp(new Date())}]`, ...args)
+  }
+}
+
+function formatTimestamp(date) {
+  const offsetMinutes = -date.getTimezoneOffset()
+  const offsetSign = offsetMinutes >= 0 ? '+' : '-'
+  const offsetHours = Math.floor(Math.abs(offsetMinutes) / 60)
+  const offsetRemainder = Math.abs(offsetMinutes) % 60
+
+  return [
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.` +
+      `${String(date.getMilliseconds()).padStart(3, '0')}`,
+    `${offsetSign}${pad(offsetHours)}:${pad(offsetRemainder)}`
+  ].join(' ')
+}
+
+function pad(value) {
+  return String(value).padStart(2, '0')
+}
 
 function connect() {
   console.log('Resolving Java Realm endpoint and preparing HAProxy...')
