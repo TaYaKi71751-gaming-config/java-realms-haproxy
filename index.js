@@ -1,36 +1,216 @@
-require('dotenv').config();
+'use strict'
 
-const mineflayer = require('mineflayer');
-const createClient = require('minecraft-protocol').createClient;
-const { Authflow } = require('prismarine-auth');
-const { RealmAPI } = require('prismarine-realms');
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
+const fs = require('node:fs')
+const net = require('node:net')
+const path = require('node:path')
+const readline = require('node:readline')
+const { execFileSync } = require('node:child_process')
+const mc = require('minecraft-protocol')
+const createProtocol775Packets = require('./src/protocol-775')
 
-// Change this placeholder to your actual Microsoft profile email address
-const BOT_EMAIL = process.env.BOT_EMAIL;
+const PROTOCOL_VERSION = 775
+// minecraft-protocol has not published a named 26.1.2 codec yet. Protocol 774
+// is the closest packet schema; the handshake below is always overridden to 775.
+const CODEC_VERSION = '1.21.11'
+const AUTH_FOLDER = path.join(process.cwd(), 'msa_cache')
+const LAST_LOGIN_FILE = path.join(AUTH_FOLDER, 'last-login.json')
+const CUSTOM_PACKETS = createProtocol775Packets(require('minecraft-data')(CODEC_VERSION))
+const IP_CACHE_FILE = path.join(process.cwd(), 'last_ip.txt')
 
-const IP_CACHE_FILE = path.join(__dirname, 'last_ip.txt');
-const HAPROXY_CONFIG = '/etc/haproxy/haproxy.cfg';
-const MSA_CACHE_DIR = path.join(__dirname, 'msa_cache');
+loadEnvFile(path.join(process.cwd(), '.env'))
+const lastLogin = loadJsonFile(LAST_LOGIN_FILE)
 
-function getLastIP() {
-  if (fs.existsSync(IP_CACHE_FILE)) {
-    return fs.readFileSync(IP_CACHE_FILE, 'utf8').trim();
+const username = process.env.BOT_EMAIL
+const realmId = process.env.REALM_ID
+const realmName = process.env.REALM_NAME
+const proxyHost = process.env.PROXY_HOST || '127.0.0.1'
+const proxyPort = parseInteger(process.env.PROXY_PORT, 25565, 'PROXY_PORT', 65535)
+const haproxyConfig = process.env.HAPROXY_CONFIG || '/etc/haproxy/haproxy.cfg'
+const reconnectDelay = parseInteger(
+  process.env.RECONNECT_DELAY_MS,
+  5000,
+  'RECONNECT_DELAY_MS',
+  Number.MAX_SAFE_INTEGER
+)
+
+if (!username) {
+  console.error('BOT_EMAIL is required. Set it in .env.')
+  process.exit(1)
+}
+
+let client
+let reconnectTimer
+let shuttingDown = false
+let position
+let connectedAt
+let reconnectAttempts = 0
+let sentPlayerLoaded = false
+let selectedRealm
+let configuredTarget
+
+function connect() {
+  console.log('Resolving Java Realm endpoint and preparing HAProxy...')
+  createProtocolClient()
+}
+
+function createProtocolClient() {
+  sentPlayerLoaded = false
+
+  const options = {
+    username,
+    auth: 'microsoft',
+    realms: {
+      pickRealm: chooseRealm
+    },
+    version: CODEC_VERSION,
+    customPackets: CUSTOM_PACKETS,
+    hideErrors: true,
+    profilesFolder: AUTH_FOLDER,
+    connect(protocolClient) {
+      // createClient derives 774 from CODEC_VERSION. Override it immediately
+      // before setProtocol writes the handshake packet.
+      options.protocolVersion = PROTOCOL_VERSION
+      ensureHAProxyTarget(options.host, options.port)
+      console.log(
+        `Connecting bot to Realm "${selectedRealm.name}" through ` +
+        `${proxyHost}:${proxyPort}...`
+      )
+      protocolClient.setSocket(net.connect(proxyPort, proxyHost))
+    },
+    onMsaCode: printMicrosoftCode
   }
-  return null;
+
+  const currentClient = mc.createClient(options)
+  client = currentClient
+
+  currentClient.on('session', (session) => {
+    console.log(`Authenticated as ${session.selectedProfile.name}`)
+    saveLastLogin({
+      profile: {
+        id: session.selectedProfile.id,
+        name: session.selectedProfile.name
+      }
+    })
+  })
+
+  currentClient.on('playerJoin', () => {
+    connectedAt = Date.now()
+    console.log(
+      `Joined Realm "${selectedRealm.name}" ` +
+      `using official protocol ${PROTOCOL_VERSION}`
+    )
+    currentClient.write('settings', {
+      locale: 'en_us',
+      viewDistance: 8,
+      chatFlags: 0,
+      chatColors: true,
+      skinParts: 0x7f,
+      mainHand: 1,
+      enableTextFiltering: false,
+      enableServerListing: true,
+      particleStatus: 'minimal'
+    })
+    saveLastLogin({
+      lastJoinedAt: new Date().toISOString(),
+      target: {
+        type: 'realm',
+        id: selectedRealm.id,
+        name: selectedRealm.name,
+        host: options.host,
+        port: options.port
+      }
+    })
+  })
+
+  currentClient.on('position', (packet) => {
+    position = packet
+    currentClient.write('teleport_confirm', { teleportId: packet.teleportId })
+    if (!sentPlayerLoaded) {
+      sentPlayerLoaded = true
+      currentClient.writeRaw(Buffer.from([0x2c]))
+    }
+  })
+
+  currentClient.on('protocol_775_chunk_batch_finished', () => {
+    currentClient.write('chunk_batch_received', { chunksPerTick: 10 })
+  })
+
+  currentClient.on('playerChat', (packet) => {
+    console.log(`<player> ${packet.plainMessage || formatComponent(packet.formattedMessage)}`)
+  })
+
+  currentClient.on('systemChat', (packet) => {
+    console.log(formatComponent(packet.formattedMessage))
+  })
+
+  currentClient.on('disconnect', (packet) => {
+    const reason = formatComponent(packet.reason)
+    console.error('Login/configuration disconnect:', reason)
+    stopAfterFailure(currentClient, `server disconnect: ${reason}`)
+  })
+
+  currentClient.on('kick_disconnect', (packet) => {
+    const reason = formatComponent(packet.reason)
+    console.error('Kicked:', reason)
+    stopAfterFailure(currentClient, `kicked: ${reason}`)
+  })
+
+  currentClient.on('error', (error) => {
+    console.error('Protocol error:', error.message)
+    stopAfterFailure(currentClient, `error: ${error.message}`)
+  })
+
+  currentClient.once('end', (reason) => {
+    if (client !== currentClient) return
+
+    const connectedFor = connectedAt ? Date.now() - connectedAt : 0
+    console.log(
+      `Disconnected after ${Math.round(connectedFor / 1000)}s: ` +
+      `${reason || 'connection ended'}`
+    )
+    if (connectedFor >= 120000) reconnectAttempts = 0
+    connectedAt = undefined
+    client = undefined
+    if (!shuttingDown) scheduleReconnect()
+  })
 }
 
-function saveCurrentIP(ip) {
-  fs.writeFileSync(IP_CACHE_FILE, ip, 'utf8');
+function chooseRealm(realms) {
+  if (!realms.length) {
+    throw new Error('No Java Realms are available to this Microsoft account.')
+  }
+
+  let realm
+
+  if (realmId) {
+    realm = realms.find(candidate => String(candidate.id) === realmId)
+  } else if (realmName) {
+    realm = realms.find(candidate => candidate.name === realmName)
+  } else {
+    realm = realms.find(candidate => candidate.state === 'OPEN') || realms[0]
+  }
+
+  if (!realm) {
+    const selector = realmId
+      ? `ID ${realmId}`
+      : `name "${realmName}"`
+    throw new Error(`Could not find a Java Realm with ${selector}.`)
+  }
+
+  selectedRealm = realm
+  console.log(`Selected Realm "${realm.name}" (${realm.id}).`)
+  return realm
 }
 
-function reloadHAProxy(newHost, newPort) {
-  try {
-    console.log(`[HAProxy] Updating backend target configuration -> ${newHost}:${newPort}`);
+function ensureHAProxyTarget(host, port) {
+  const target = `${host}:${port}`
+  if (configuredTarget === target || getLastTarget() === target) {
+    configuredTarget = target
+    console.log(`[HAProxy] Target already points to ${target}.`)
+    return
+  }
 
-    const configTemplate = `global
+  const config = `global
     log /dev/log local0
     log /dev/log local1 notice
     chroot /var/lib/haproxy
@@ -49,7 +229,7 @@ defaults
     timeout server  24h
     timeout tunnel  24h
 frontend minecraft_front
-    bind 0.0.0.0:25565
+    bind 0.0.0.0:${proxyPort}
     mode tcp
     option clitcpka
     default_backend minecraft_back
@@ -57,108 +237,148 @@ backend minecraft_back
     mode tcp
     balance roundrobin
     option srvtcpka
-    server dynamic_realm ${newHost}:${newPort} check sni str(${newHost})
-`;
+    server dynamic_realm ${host}:${port} check sni str(${host})
+`
 
-    // FIX 1: Write to a temporary file in your local directory first to prevent EACCES errors
-    const tempPath = path.join(__dirname, 'haproxy.tmp');
-    fs.writeFileSync(tempPath, configTemplate, 'utf8');
+  const temporaryConfig = path.join(process.cwd(), 'haproxy.tmp')
+  fs.writeFileSync(temporaryConfig, config, 'utf8')
 
-    // Use sudo via shell execution to securely copy the configuration over to the system folder
-    execSync(`sudo mv ${tempPath} ${HAPROXY_CONFIG}`);
-    execSync('sudo systemctl reload haproxy');
-    console.log('[HAProxy] Configuration reloaded seamlessly.');
-  } catch (error) {
-    console.error('[HAProxy] Failed to apply configurations:', error.message);
+  console.log(`[HAProxy] Updating backend target to ${target}...`)
+  execFileSync('sudo', ['mv', temporaryConfig, haproxyConfig], { stdio: 'inherit' })
+  execFileSync('sudo', ['systemctl', 'reload', 'haproxy'], { stdio: 'inherit' })
+  fs.writeFileSync(IP_CACHE_FILE, target, 'utf8')
+  configuredTarget = target
+
+  console.log('[HAProxy] Configuration reloaded.')
+}
+
+function getLastTarget() {
+  try {
+    return fs.readFileSync(IP_CACHE_FILE, 'utf8').trim()
+  } catch {
+    return undefined
   }
 }
 
-async function fetchRealmAddressWithRetry(api, maxRetries = 10, delayMs = 5000) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`Fetching active Minecraft Realm endpoints (Attempt ${attempt}/${maxRetries})...`);
-      const realmsList = await api.getRealms();
-      if (!realmsList || realmsList.length === 0) {
-        console.error('No available Realms discovered on this profile.');
-        process.exit(1);
-      }
-      const activeRealm = realmsList[0];
-      const connectionAddress = await activeRealm.getAddress();
-      return connectionAddress;
-    } catch (err) {
-      if (err.message.includes('503') || err.message.includes('Service Unavailable')) {
-        console.warn(`[Mojang API] Realm is waking up (503). Retrying in ${delayMs / 1000}s...`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      } else {
-        console.error('Fatal API Error occurred:', err.message);
-        process.exit(1);
-      }
+function stopAfterFailure(currentClient, reason) {
+  if (client !== currentClient) return
+
+  console.log(`Automatic reconnect disabled after ${reason}`)
+  shuttingDown = true
+  clearTimeout(reconnectTimer)
+  reconnectTimer = undefined
+  terminal.close()
+  if (!currentClient.ended) currentClient.end(reason)
+}
+
+function printMicrosoftCode(data) {
+  if (data.message) {
+    console.log(data.message)
+    return
+  }
+
+  console.log(
+    `Open ${data.verification_uri || data.verificationUri} and enter code ` +
+    `${data.user_code || data.userCode}`
+  )
+}
+
+function scheduleReconnect() {
+  if (shuttingDown || reconnectTimer) return
+
+  const delay = Math.min(reconnectDelay * (2 ** reconnectAttempts), 60000)
+  reconnectAttempts += 1
+  console.log(`Reconnecting in ${delay}ms...`)
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = undefined
+    connect()
+  }, delay)
+}
+
+function formatComponent(value) {
+  if (typeof value === 'string') return value
+  if (value == null) return ''
+  if (value.value?.text) return value.value.text
+  if (value.text) return value.text
+
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function parseInteger(value, fallback, name, maximum) {
+  if (value === undefined || value === '') return fallback
+
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maximum) {
+    console.error(`${name} must be an integer from 0 to ${maximum}.`)
+    process.exit(1)
+  }
+  return parsed
+}
+
+function loadEnvFile(filename) {
+  if (!fs.existsSync(filename)) return
+
+  for (const line of fs.readFileSync(filename, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/)
+    if (!match || match[1] in process.env) continue
+
+    let value = match[2]
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1)
     }
+    process.env[match[1]] = value
   }
-  process.exit(1);
 }
 
-async function startWorkflow() {
-  console.log('Initializing pre-authentication process...');
-  const authflow = new Authflow(BOT_EMAIL, MSA_CACHE_DIR);
-  const xboxToken = await authflow.getMinecraftJavaToken().catch(err => {
-    console.error('Authentication Flow Failed. Run manually to link account.', err.message);
-    process.exit(1);
-  });
-  const api = RealmAPI.from(authflow, 'java');
-  const connectionAddress = await fetchRealmAddressWithRetry(api);
-  const remoteHost = connectionAddress.host;
-  const targetPort = connectionAddress.port || 25565;
-  const currentFullIP = `${remoteHost}:${targetPort}`;
-  const lastIP = getLastIP();
-  console.log(`Previous Cached IP: ${lastIP || 'None'} | Current Active Route: ${currentFullIP}`);
-  if (lastIP !== currentFullIP) {
-    reloadHAProxy(remoteHost, targetPort);
-    saveCurrentIP(currentFullIP);
-    console.log('Waiting 3s for HAProxy worker pipeline to settle...');
-    await new Promise(resolve => setTimeout(resolve, 3000));
+function loadJsonFile(filename) {
+  try {
+    return JSON.parse(fs.readFileSync(filename, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+function saveLastLogin(update) {
+  Object.assign(lastLogin, update)
+  fs.mkdirSync(AUTH_FOLDER, { recursive: true })
+  fs.writeFileSync(LAST_LOGIN_FILE, `${JSON.stringify(lastLogin, null, 2)}\n`, {
+    mode: 0o600
+  })
+}
+
+const terminal = readline.createInterface({ input: process.stdin, output: process.stdout })
+
+terminal.on('line', (line) => {
+  const input = line.trim()
+  if (!input) return
+
+  if (input === '/quit') {
+    shutdown()
+  } else if (input === '/pos') {
+    console.log(position || 'The server has not sent a position packet yet.')
+  } else if (client?.chat) {
+    console.log('Chat is disabled until its protocol 775 packet layout is available.')
   } else {
-    console.log('[HAProxy] Target matches cache record. Skipping hardware reload.');
+    console.log('The bot has not entered the play state yet.')
   }
-  launchBot(remoteHost, targetPort, xboxToken);
+})
+
+function shutdown() {
+  if (shuttingDown) return
+  shuttingDown = true
+  clearTimeout(reconnectTimer)
+  terminal.close()
+  client?.end('Bot shutting down')
 }
 
-function launchBot(remoteHost, targetPort, xboxToken) {
-  console.log('Bridging pre-authenticated connection through proxy...');
-  const profileName = (xboxToken.profile && xboxToken.profile.name) ? xboxToken.profile.name : 'Bot';
+process.once('SIGINT', shutdown)
+process.once('SIGTERM', shutdown)
 
-  const client = createClient({
-    host: '127.0.0.1',
-    port: 25565,
-
-    // FIX 2: Setting version to false disables the hardcoded check, forcing the protocol layer
-    // to dynamically negotiate the correct versions directly with the active backend
-    version: false,
-
-    username: profileName,
-    session: xboxToken.session,
-    auth: 'none',
-    profilesFolder: MSA_CACHE_DIR,
-    skipValidation: true,
-    fakeHost: remoteHost
-  });
-
-  const bot = mineflayer.createBot({ client: client });
-
-  bot.on('spawn', () => {
-    console.log('Success! Bot bypassed local handshake loops and joined the Realm via HAProxy.');
-  });
-
-  bot.on('error', (err) => {
-    console.error('Mineflayer Error Context:', err.message);
-  });
-
-  bot.on('end', () => {
-    console.log('Bot disconnected. Rebooting instance loop in 10 seconds...');
-    setTimeout(() => {
-      process.exit(0);
-    }, 10000);
-  });
-}
-
-startWorkflow();
+connect()

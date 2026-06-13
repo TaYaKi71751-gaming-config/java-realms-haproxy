@@ -1,9 +1,18 @@
 {
+  "name": "java-realms-haproxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Keeps HAProxy pointed at a Java Realm and connects an online bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "check": "node --check index.js && node --check src/protocol-775.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "dotenv": "^17.4.2",
-    "minecraft-protocol": "^1.66.2",
-    "mineflayer": "^4.37.1",
-    "prismarine-auth": "^3.1.1",
-    "prismarine-realms": "^1.6.0"
+    "minecraft-data": "^3.110.2",
+    "minecraft-protocol": "^1.66.2"
   }
 }

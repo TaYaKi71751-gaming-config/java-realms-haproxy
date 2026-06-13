@@ -1,3 +1,6 @@
 .env
 msa_cache/
 node_modules/
+npm-debug.log*
+last_ip.txt
+haproxy.tmp
