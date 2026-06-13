@@ -34,6 +34,12 @@ const reconnectDelay = parseInteger(
   'RECONNECT_DELAY_MS',
   Number.MAX_SAFE_INTEGER
 )
+const sleepClickInterval = parseInteger(
+  process.env.SLEEP_CLICK_INTERVAL_MS,
+  1000,
+  'SLEEP_CLICK_INTERVAL_MS',
+  Number.MAX_SAFE_INTEGER
+)
 const FAILURE_EXIT_TIMEOUT_MS = 2000
 
 if (!username) {
@@ -52,6 +58,8 @@ let selectedRealm
 let configuredTarget
 let exitAfterDisconnect = false
 let failureExitTimer
+let sleepClickTimer
+let interactionSequence = 0
 
 function installTimestampedConsole() {
   for (const method of ['log', 'info', 'warn', 'error', 'debug']) {
@@ -85,6 +93,9 @@ function connect() {
 
 function createProtocolClient() {
   sentPlayerLoaded = false
+  position = undefined
+  stopSleepClicks()
+  interactionSequence = 0
 
   const options = {
     username,
@@ -153,12 +164,13 @@ function createProtocolClient() {
   })
 
   currentClient.on('position', (packet) => {
-    position = packet
+    position = updatePosition(position, packet)
     currentClient.write('teleport_confirm', { teleportId: packet.teleportId })
     if (!sentPlayerLoaded) {
       sentPlayerLoaded = true
       currentClient.writeRaw(Buffer.from([0x2c]))
     }
+    tryAutoSleep(currentClient)
   })
 
   currentClient.on('protocol_775_chunk_batch_finished', () => {
@@ -201,6 +213,7 @@ function createProtocolClient() {
     if (connectedFor >= 120000) reconnectAttempts = 0
     connectedAt = undefined
     client = undefined
+    stopSleepClicks()
     if (exitAfterDisconnect) {
       clearTimeout(failureExitTimer)
       console.log('Exiting process after connection failure.')
@@ -235,6 +248,78 @@ function chooseRealm(realms) {
   selectedRealm = realm
   console.log(`Selected Realm "${realm.name}" (${realm.id}).`)
   return realm
+}
+
+function tryAutoSleep(currentClient) {
+  if (
+    client !== currentClient ||
+    !position
+  ) {
+    stopSleepClicks()
+    return
+  }
+
+  if (sleepClickTimer) return
+
+  rightClickUnderfoot(currentClient)
+  sleepClickTimer = setInterval(() => {
+    if (
+      client !== currentClient ||
+      !position
+    ) {
+      stopSleepClicks()
+      return
+    }
+    rightClickUnderfoot(currentClient)
+  }, sleepClickInterval)
+}
+
+function rightClickUnderfoot(currentClient) {
+  const bedPosition = {
+    x: Math.floor(position.x),
+    y: Math.floor(position.y - 0.01),
+    z: Math.floor(position.z)
+  }
+
+  currentClient.write('look', {
+    yaw: position.yaw || 0,
+    pitch: 90,
+    flags: {
+      onGround: true,
+      hasHorizontalCollision: false
+    }
+  })
+  currentClient.write('block_place', {
+    hand: 0,
+    location: bedPosition,
+    direction: 1,
+    cursorX: 0.5,
+    cursorY: 1,
+    cursorZ: 0.5,
+    insideBlock: false,
+    worldBorderHit: false,
+    sequence: interactionSequence++
+  })
+  console.log(
+    `Looked down and right-clicked underfoot at ` +
+    `${bedPosition.x},${bedPosition.y},${bedPosition.z}.`
+  )
+}
+
+function stopSleepClicks() {
+  clearInterval(sleepClickTimer)
+  sleepClickTimer = undefined
+}
+
+function updatePosition(current, packet) {
+  const flags = packet.flags || {}
+  return {
+    x: flags.x ? (current?.x || 0) + packet.x : packet.x,
+    y: flags.y ? (current?.y || 0) + packet.y : packet.y,
+    z: flags.z ? (current?.z || 0) + packet.z : packet.z,
+    yaw: flags.yaw ? (current?.yaw || 0) + packet.yaw : packet.yaw,
+    pitch: flags.pitch ? (current?.pitch || 0) + packet.pitch : packet.pitch
+  }
 }
 
 function ensureHAProxyTarget(host, port) {
@@ -303,6 +388,7 @@ function stopAfterFailure(currentClient, reason) {
   exitAfterDisconnect = true
   clearTimeout(reconnectTimer)
   reconnectTimer = undefined
+  stopSleepClicks()
   terminal.close()
 
   failureExitTimer = setTimeout(() => {
@@ -416,6 +502,7 @@ function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
   clearTimeout(reconnectTimer)
+  stopSleepClicks()
   terminal.close()
   client?.end('Bot shutting down')
 }

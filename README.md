@@ -35,3 +35,7 @@ Unexpected socket closures reconnect automatically. A process manager such as
 PM2 may restart the process after it exits, depending on its configuration.
 
 All console output includes a local timestamp and UTC offset.
+
+Whenever connected, the bot looks straight down and repeatedly right-clicks
+the block directly under its feet. Set `SLEEP_CLICK_INTERVAL_MS` to control the
+interval; the default is one second.
