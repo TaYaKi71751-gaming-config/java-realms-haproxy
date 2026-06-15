@@ -36,9 +36,10 @@ PM2 may restart the process after it exits, depending on its configuration.
 
 All console output includes a local timestamp and UTC offset.
 
-Whenever connected, the bot looks straight down and repeatedly right-clicks
-the block directly under its feet. Set `SLEEP_CLICK_INTERVAL_MS` to control the
-interval; the default is one second.
+Set `AUTO_SLEEP_ENABLED=true` to make the bot look straight down and repeatedly
+right-click the block directly under its feet whenever connected. Set
+`SLEEP_CLICK_INTERVAL_MS` to control the interval; the default is one second.
 
-When the bot dies, it automatically requests respawn after 500 milliseconds.
-Set `RESPAWN_DELAY_MS` to change the delay.
+Set `AUTO_RESPAWN_ENABLED=true` to automatically request respawn when the bot
+dies. The request is sent after 500 milliseconds by default; set
+`RESPAWN_DELAY_MS` to change the delay.

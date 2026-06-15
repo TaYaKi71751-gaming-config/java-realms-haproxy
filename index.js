@@ -34,11 +34,17 @@ const reconnectDelay = parseInteger(
   'RECONNECT_DELAY_MS',
   Number.MAX_SAFE_INTEGER
 )
+const autoSleepEnabled = parseBoolean(process.env.AUTO_SLEEP_ENABLED, false, 'AUTO_SLEEP_ENABLED')
 const sleepClickInterval = parseInteger(
   process.env.SLEEP_CLICK_INTERVAL_MS,
   1000,
   'SLEEP_CLICK_INTERVAL_MS',
   Number.MAX_SAFE_INTEGER
+)
+const autoRespawnEnabled = parseBoolean(
+  process.env.AUTO_RESPAWN_ENABLED,
+  false,
+  'AUTO_RESPAWN_ENABLED'
 )
 const respawnDelay = parseInteger(
   process.env.RESPAWN_DELAY_MS,
@@ -191,8 +197,10 @@ function createProtocolClient() {
     awaitingRespawn = true
     position = undefined
     stopSleepClicks()
-    console.log(`Player died: ${formatComponent(packet.message)}. Respawning...`)
+    console.log(`Player died: ${formatComponent(packet.message)}.`)
+    if (!autoRespawnEnabled) return
 
+    console.log(`Requesting respawn in ${respawnDelay}ms...`)
     respawnTimer = setTimeout(() => {
       respawnTimer = undefined
       if (client !== currentClient || currentClient.ended) return
@@ -282,6 +290,7 @@ function chooseRealm(realms) {
 
 function tryAutoSleep(currentClient) {
   if (
+    !autoSleepEnabled ||
     client !== currentClient ||
     !position
   ) {
@@ -477,6 +486,17 @@ function parseInteger(value, fallback, name, maximum) {
     process.exit(1)
   }
   return parsed
+}
+
+function parseBoolean(value, fallback, name) {
+  if (value === undefined || value === '') return fallback
+
+  const normalized = value.toLowerCase()
+  if (normalized === 'true') return true
+  if (normalized === 'false') return false
+
+  console.error(`${name} must be true or false.`)
+  process.exit(1)
 }
 
 function loadEnvFile(filename) {
