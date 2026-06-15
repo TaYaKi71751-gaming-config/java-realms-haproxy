@@ -38,6 +38,7 @@ const HOTBAR_FIRST_SLOT = 36
 const HOTBAR_LAST_SLOT = 44
 const FOOD_SWAP_HOTBAR_INDEX = 8
 const OFFHAND_SWAP_BUTTON = 40
+const UNKNOWN_OFFHAND_FOOD_POINTS = 8
 
 loadEnvFile(path.join(process.cwd(), '.env'))
 const lastLogin = loadJsonFile(LAST_LOGIN_FILE)
@@ -317,6 +318,9 @@ function createProtocolClient() {
     const offhand = packet.equipments.find(equipment => equipment.slot === 1)
     if (!offhand) return
 
+    console.log(
+      `Offhand equipment item ID: ${offhand.item?.itemCount > 0 ? offhand.item.itemId : 'empty'}.`
+    )
     updateOffhandFood(offhand.item)
     if (shouldAutoEat()) tryAutoEat(currentClient)
     else finishAutoEating(currentClient)
@@ -653,6 +657,21 @@ function findBestFood() {
   if (foodLevel === undefined) return undefined
 
   const missingFoodPoints = 20 - foodLevel
+  if (
+    autoEatOffhandEnabled &&
+    !offhandFood &&
+    missingFoodPoints >= UNKNOWN_OFFHAND_FOOD_POINTS
+  ) {
+    return {
+      slot: OFFHAND_SLOT,
+      food: {
+        id: offhandItemId,
+        displayName: 'offhand item',
+        foodPoints: UNKNOWN_OFFHAND_FOOD_POINTS
+      }
+    }
+  }
+
   const movedFoodSlot = HOTBAR_FIRST_SLOT + FOOD_SWAP_HOTBAR_INDEX
   const movedFoodItem = inventorySlots[movedFoodSlot]
   if (
