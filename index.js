@@ -35,6 +35,7 @@ const INVENTORY_SWAP_DELAY_MS = 500
 const OFFHAND_SLOT = 45
 const INVENTORY_FIRST_SLOT = 9
 const HOTBAR_FIRST_SLOT = 36
+const FOOD_SWAP_HOTBAR_INDEX = 8
 const OFFHAND_SWAP_BUTTON = 40
 
 loadEnvFile(path.join(process.cwd(), '.env'))
@@ -127,7 +128,9 @@ let offhandItemId
 let offhandRefillPending = false
 let inventoryStateId = 0
 let inventorySlots = []
+let movedFood
 let playerEntityId
+let selectedHotbarSlot = 0
 let isAutoEating = false
 let loggedInventoryFoodState
 let interactionSequence = 0
@@ -178,6 +181,8 @@ function createProtocolClient() {
   offhandRefillPending = false
   inventoryStateId = 0
   inventorySlots = []
+  movedFood = undefined
+  selectedHotbarSlot = 0
   playerEntityId = undefined
   loggedInventoryFoodState = undefined
   interactionSequence = 0
@@ -558,13 +563,16 @@ function tryAutoEat(currentClient) {
   }
   if (eatRetryTimer) return
 
-  if (!offhandFood) {
+  const candidate = findBestFood()
+  if (!candidate) {
     refillOffhand(currentClient)
     return
   }
 
-  const candidate = findBestFood()
-  if (!candidate) return
+  if (candidate.slot >= INVENTORY_FIRST_SLOT && candidate.slot < HOTBAR_FIRST_SLOT) {
+    moveFoodToHotbar(currentClient, candidate)
+    return
+  }
 
   if (!isAutoEating) {
     console.log(
@@ -575,8 +583,10 @@ function tryAutoEat(currentClient) {
   isAutoEating = true
   stopSleepClicks()
   stopAutoAttack()
+  const hand = candidate.slot === OFFHAND_SLOT ? 1 : 0
+  if (hand === 0) selectHotbarSlot(currentClient, candidate.slot - HOTBAR_FIRST_SLOT)
   currentClient.write('use_item', {
-    hand: 1,
+    hand,
     sequence: interactionSequence++,
     rotation: {
       x: position.yaw || 0,
@@ -615,7 +625,7 @@ function shouldAutoEat() {
   return Boolean(
     (autoEatEnabled || autoEatOffhandEnabled) &&
     foodLevel !== undefined &&
-    (findBestFood() || (!offhandFood && findBestInventoryFood()))
+    findBestFood()
   )
 }
 
@@ -639,11 +649,38 @@ function updateOffhandFood(item) {
 }
 
 function findBestFood() {
-  if (foodLevel === undefined || !offhandFood) return undefined
+  if (foodLevel === undefined) return undefined
 
   const missingFoodPoints = 20 - foodLevel
-  if (offhandFood.foodPoints > missingFoodPoints) return undefined
-  return { slot: OFFHAND_SLOT, food: offhandFood }
+  const movedFoodSlot = HOTBAR_FIRST_SLOT + FOOD_SWAP_HOTBAR_INDEX
+  const movedFoodItem = inventorySlots[movedFoodSlot]
+  if (
+    movedFood &&
+    movedFoodItem?.itemCount > 0 &&
+    movedFoodItem.itemId === movedFood.food.id &&
+    movedFood.food.foodPoints <= missingFoodPoints
+  ) {
+    return { slot: movedFoodSlot, food: movedFood.food }
+  }
+
+  const candidates = []
+  for (const slot of [
+    ...Array.from(
+      { length: HOTBAR_FIRST_SLOT - INVENTORY_FIRST_SLOT },
+      (_, index) => INVENTORY_FIRST_SLOT + index
+    ),
+    OFFHAND_SLOT
+  ]) {
+    const item = inventorySlots[slot]
+    const food = item?.itemCount > 0 ? getFoodByItemId(item.itemId) : undefined
+    if (!food || food.foodPoints > missingFoodPoints) continue
+    candidates.push({ slot, food })
+  }
+
+  return candidates.sort((a, b) => {
+    if (a.food.foodPoints !== b.food.foodPoints) return b.food.foodPoints - a.food.foodPoints
+    return a.slot === OFFHAND_SLOT ? -1 : 1
+  })[0]
 }
 
 function findBestInventoryFood() {
@@ -710,14 +747,55 @@ function refillOffhand(currentClient) {
   }, INVENTORY_SWAP_DELAY_MS)
 }
 
+function moveFoodToHotbar(currentClient, candidate) {
+  movedFood = { sourceSlot: candidate.slot, food: candidate.food }
+  console.log(`Moving ${candidate.food.displayName} from inventory slot ${candidate.slot} to hotbar.`)
+  currentClient.write('window_click', {
+    windowId: 0,
+    stateId: inventoryStateId,
+    slot: candidate.slot,
+    mouseButton: FOOD_SWAP_HOTBAR_INDEX,
+    mode: 2,
+    changedSlots: [],
+    cursorItem: undefined
+  })
+  eatRetryTimer = setTimeout(() => {
+    eatRetryTimer = undefined
+    tryAutoEat(currentClient)
+  }, INVENTORY_SWAP_DELAY_MS)
+}
+
+function selectHotbarSlot(currentClient, slot) {
+  if (selectedHotbarSlot === slot) return
+  selectedHotbarSlot = slot
+  currentClient.write('held_item_slot', { slotId: slot })
+}
+
 function finishAutoEating(currentClient) {
   const wasEating = isAutoEating
   stopAutoEat()
+  restoreMovedFood(currentClient)
   if (!wasEating) return
 
   console.log(`Stopped eating at food level ${foodLevel} to avoid wasting food.`)
   tryAutoSleep(currentClient)
   tryAutoAttack(currentClient)
+}
+
+function restoreMovedFood(currentClient) {
+  if (!movedFood || client !== currentClient || currentClient.ended) return
+
+  console.log(`Returning ${movedFood.food.displayName} to inventory slot ${movedFood.sourceSlot}.`)
+  currentClient.write('window_click', {
+    windowId: 0,
+    stateId: inventoryStateId,
+    slot: movedFood.sourceSlot,
+    mouseButton: FOOD_SWAP_HOTBAR_INDEX,
+    mode: 2,
+    changedSlots: [],
+    cursorItem: undefined
+  })
+  movedFood = undefined
 }
 
 function updateTrackedEntity(packet) {
