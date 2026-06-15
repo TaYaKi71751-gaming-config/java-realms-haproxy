@@ -22,7 +22,10 @@ const IP_CACHE_FILE = path.join(process.cwd(), 'last_ip.txt')
 const HOSTILE_ENTITY_IDS = new Set(
   MINECRAFT_DATA.entitiesArray.filter(entity => entity.type === 'hostile').map(entity => entity.id)
 )
+const FOOD_BY_ITEM_ID = new Map(MINECRAFT_DATA.foodsArray.map(food => [food.id, food]))
 const ATTACK_RANGE_SQUARED = 3 * 3
+const EAT_RETRY_DELAY_MS = 2000
+const OFFHAND_SLOT = 45
 
 loadEnvFile(path.join(process.cwd(), '.env'))
 const lastLogin = loadJsonFile(LAST_LOGIN_FILE)
@@ -62,6 +65,11 @@ const attackInterval = parseInteger(
   'ATTACK_INTERVAL_MS',
   Number.MAX_SAFE_INTEGER
 )
+const autoEatOffhandEnabled = parseBoolean(
+  process.env.AUTO_EAT_OFFHAND_ENABLED,
+  false,
+  'AUTO_EAT_OFFHAND_ENABLED'
+)
 const respawnDelay = parseInteger(
   process.env.RESPAWN_DELAY_MS,
   500,
@@ -89,7 +97,11 @@ let failureExitTimer
 let sleepClickTimer
 let respawnTimer
 let attackTimer
+let eatRetryTimer
 let awaitingRespawn = false
+let foodLevel
+let offhandFood
+let isAutoEating = false
 let interactionSequence = 0
 const hostileEntities = new Map()
 
@@ -128,9 +140,12 @@ function createProtocolClient() {
   position = undefined
   stopSleepClicks()
   stopAutoAttack()
+  stopAutoEat()
   clearTimeout(respawnTimer)
   respawnTimer = undefined
   awaitingRespawn = false
+  foodLevel = undefined
+  offhandFood = undefined
   interactionSequence = 0
   hostileEntities.clear()
 
@@ -208,8 +223,34 @@ function createProtocolClient() {
       sentPlayerLoaded = true
       currentClient.writeRaw(Buffer.from([0x2c]))
     }
-    tryAutoSleep(currentClient)
-    tryAutoAttack(currentClient)
+    tryAutoEat(currentClient)
+    if (!isAutoEating) {
+      tryAutoSleep(currentClient)
+      tryAutoAttack(currentClient)
+    }
+  })
+
+  currentClient.on('update_health', (packet) => {
+    foodLevel = packet.food
+    if (shouldAutoEat()) {
+      tryAutoEat(currentClient)
+      return
+    }
+
+    finishAutoEating(currentClient)
+  })
+
+  currentClient.on('window_items', (packet) => {
+    if (packet.windowId !== 0) return
+    updateOffhandFood(packet.items[OFFHAND_SLOT])
+    if (shouldAutoEat()) tryAutoEat(currentClient)
+  })
+
+  currentClient.on('set_slot', (packet) => {
+    if (packet.windowId !== 0 || packet.slot !== OFFHAND_SLOT) return
+    updateOffhandFood(packet.item)
+    if (shouldAutoEat()) tryAutoEat(currentClient)
+    else finishAutoEating(currentClient)
   })
 
   currentClient.on('spawn_entity', (packet) => {
@@ -243,6 +284,7 @@ function createProtocolClient() {
     position = undefined
     stopSleepClicks()
     stopAutoAttack()
+    stopAutoEat()
     console.log(`Player died: ${formatComponent(packet.message)}.`)
     if (!autoRespawnEnabled) return
 
@@ -297,6 +339,7 @@ function createProtocolClient() {
     client = undefined
     stopSleepClicks()
     stopAutoAttack()
+    stopAutoEat()
     hostileEntities.clear()
     clearTimeout(respawnTimer)
     respawnTimer = undefined
@@ -339,6 +382,7 @@ function chooseRealm(realms) {
 function tryAutoSleep(currentClient) {
   if (
     !autoSleepEnabled ||
+    isAutoEating ||
     client !== currentClient ||
     !position
   ) {
@@ -399,7 +443,7 @@ function stopSleepClicks() {
 }
 
 function tryAutoAttack(currentClient) {
-  if (!autoAttackEnabled || client !== currentClient || !position) {
+  if (!autoAttackEnabled || isAutoEating || client !== currentClient || !position) {
     stopAutoAttack()
     return
   }
@@ -436,6 +480,72 @@ function attackNearestHostile(currentClient) {
 function stopAutoAttack() {
   clearInterval(attackTimer)
   attackTimer = undefined
+}
+
+function tryAutoEat(currentClient) {
+  if (
+    !autoEatOffhandEnabled ||
+    client !== currentClient ||
+    !position ||
+    awaitingRespawn ||
+    foodLevel === undefined ||
+    !shouldAutoEat()
+  ) {
+    if (!shouldAutoEat() || client !== currentClient || awaitingRespawn) stopAutoEat()
+    return
+  }
+  if (eatRetryTimer) return
+
+  if (!isAutoEating) {
+    console.log(
+      `Food level is ${foodLevel}; eating ${offhandFood.displayName} from offhand ` +
+      `to restore ${offhandFood.foodPoints} hunger points.`
+    )
+  }
+  isAutoEating = true
+  stopSleepClicks()
+  stopAutoAttack()
+  currentClient.write('use_item', {
+    hand: 1,
+    sequence: interactionSequence++,
+    rotation: {
+      x: position.yaw || 0,
+      y: position.pitch || 0
+    }
+  })
+  eatRetryTimer = setTimeout(() => {
+    eatRetryTimer = undefined
+    tryAutoEat(currentClient)
+  }, EAT_RETRY_DELAY_MS)
+}
+
+function stopAutoEat() {
+  clearTimeout(eatRetryTimer)
+  eatRetryTimer = undefined
+  isAutoEating = false
+}
+
+function shouldAutoEat() {
+  return Boolean(
+    autoEatOffhandEnabled &&
+    offhandFood &&
+    foodLevel !== undefined &&
+    20 - foodLevel >= offhandFood.foodPoints
+  )
+}
+
+function updateOffhandFood(item) {
+  offhandFood = item?.itemCount > 0 ? FOOD_BY_ITEM_ID.get(item.itemId) : undefined
+}
+
+function finishAutoEating(currentClient) {
+  const wasEating = isAutoEating
+  stopAutoEat()
+  if (!wasEating) return
+
+  console.log(`Stopped eating at food level ${foodLevel} to avoid wasting food.`)
+  tryAutoSleep(currentClient)
+  tryAutoAttack(currentClient)
 }
 
 function updateTrackedEntity(packet) {
@@ -525,6 +635,7 @@ function stopAfterFailure(currentClient, reason) {
   reconnectTimer = undefined
   stopSleepClicks()
   stopAutoAttack()
+  stopAutoEat()
   clearTimeout(respawnTimer)
   respawnTimer = undefined
   terminal.close()
@@ -653,6 +764,7 @@ function shutdown() {
   clearTimeout(reconnectTimer)
   stopSleepClicks()
   stopAutoAttack()
+  stopAutoEat()
   clearTimeout(respawnTimer)
   terminal.close()
   client?.end('Bot shutting down')

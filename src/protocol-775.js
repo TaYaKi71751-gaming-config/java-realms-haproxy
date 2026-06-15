@@ -12,9 +12,12 @@ const decodedPlayPackets = new Set([
   'entity_teleport',
   'position',
   'rel_entity_move',
+  'set_slot',
   'spawn_entity',
   'start_configuration',
-  'sync_entity_position'
+  'sync_entity_position',
+  'update_health',
+  'window_items'
 ])
 
 const customPacketTypes = {
