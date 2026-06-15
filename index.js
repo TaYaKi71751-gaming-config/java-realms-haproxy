@@ -134,6 +134,7 @@ let movedFood
 let playerEntityId
 let selectedHotbarSlot = 0
 let isAutoEating = false
+let unknownOffhandAttemptedAtFoodLevel
 let loggedInventoryFoodState
 let interactionSequence = 0
 const hostileEntities = new Map()
@@ -186,6 +187,7 @@ function createProtocolClient() {
   movedFood = undefined
   selectedHotbarSlot = 0
   playerEntityId = undefined
+  unknownOffhandAttemptedAtFoodLevel = undefined
   loggedInventoryFoodState = undefined
   interactionSequence = 0
   hostileEntities.clear()
@@ -570,7 +572,8 @@ function tryAutoEat(currentClient) {
 
   const candidate = findBestFood()
   if (!candidate) {
-    refillOffhand(currentClient)
+    if (isAutoEating) finishAutoEating(currentClient)
+    else refillOffhand(currentClient)
     return
   }
 
@@ -589,6 +592,7 @@ function tryAutoEat(currentClient) {
   stopSleepClicks()
   stopAutoAttack()
   const hand = candidate.slot === OFFHAND_SLOT ? 1 : 0
+  if (candidate.unknownOffhand) unknownOffhandAttemptedAtFoodLevel = foodLevel
   if (hand === 0) selectHotbarSlot(currentClient, candidate.slot - HOTBAR_FIRST_SLOT)
   currentClient.write('use_item', {
     hand,
@@ -657,21 +661,6 @@ function findBestFood() {
   if (foodLevel === undefined) return undefined
 
   const missingFoodPoints = 20 - foodLevel
-  if (
-    autoEatOffhandEnabled &&
-    !offhandFood &&
-    missingFoodPoints >= UNKNOWN_OFFHAND_FOOD_POINTS
-  ) {
-    return {
-      slot: OFFHAND_SLOT,
-      food: {
-        id: offhandItemId,
-        displayName: 'offhand item',
-        foodPoints: UNKNOWN_OFFHAND_FOOD_POINTS
-      }
-    }
-  }
-
   const movedFoodSlot = HOTBAR_FIRST_SLOT + FOOD_SWAP_HOTBAR_INDEX
   const movedFoodItem = inventorySlots[movedFoodSlot]
   if (
@@ -691,10 +680,30 @@ function findBestFood() {
     candidates.push({ slot, food })
   }
 
-  return candidates.sort((a, b) => {
+  const candidate = candidates.sort((a, b) => {
     if (a.food.foodPoints !== b.food.foodPoints) return b.food.foodPoints - a.food.foodPoints
     return a.slot === OFFHAND_SLOT ? -1 : 1
   })[0]
+  if (candidate) return candidate
+
+  if (
+    autoEatOffhandEnabled &&
+    !offhandFood &&
+    missingFoodPoints >= UNKNOWN_OFFHAND_FOOD_POINTS &&
+    unknownOffhandAttemptedAtFoodLevel !== foodLevel
+  ) {
+    return {
+      slot: OFFHAND_SLOT,
+      unknownOffhand: true,
+      food: {
+        id: offhandItemId,
+        displayName: 'unconfirmed offhand item',
+        foodPoints: UNKNOWN_OFFHAND_FOOD_POINTS
+      }
+    }
+  }
+
+  return undefined
 }
 
 function findBestInventoryFood() {
