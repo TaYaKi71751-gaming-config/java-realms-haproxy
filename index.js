@@ -9,6 +9,7 @@ const readline = require('node:readline')
 const { execFileSync } = require('node:child_process')
 const mc = require('minecraft-protocol')
 const createProtocol775Packets = require('./src/protocol-775')
+const protocol775Foods = require('./src/protocol-775-foods.json')
 
 const PROTOCOL_VERSION = 775
 // minecraft-protocol has not published a named 26.1.2 codec yet. Protocol 774
@@ -22,18 +23,16 @@ const IP_CACHE_FILE = path.join(process.cwd(), 'last_ip.txt')
 const HOSTILE_ENTITY_IDS = new Set(
   MINECRAFT_DATA.entitiesArray.filter(entity => entity.type === 'hostile').map(entity => entity.id)
 )
-const FOOD_BY_ITEM_ID = new Map(MINECRAFT_DATA.foodsArray.map(food => [food.id, food]))
-const UNSAFE_FOOD_NAMES = new Set([
-  'chicken',
-  'chorus_fruit',
-  'poisonous_potato',
-  'pufferfish',
-  'rotten_flesh',
-  'spider_eye',
-  'suspicious_stew'
-])
+const FOOD_BY_ITEM_ID = new Map(
+  Object.entries(protocol775Foods).map(([id, food]) => [
+    Number(id),
+    { ...food, id: Number(id), displayName: formatItemName(food.name) }
+  ])
+)
 const ATTACK_RANGE_SQUARED = 3 * 3
-const EAT_RETRY_DELAY_MS = 2000
+const EAT_FINISH_DELAY_MS = 1700
+const EAT_RETRY_DELAY_MS = 250
+const INVENTORY_SWAP_DELAY_MS = 500
 const OFFHAND_SLOT = 45
 const INVENTORY_FIRST_SLOT = 9
 const HOTBAR_FIRST_SLOT = 36
@@ -587,15 +586,31 @@ function tryAutoEat(currentClient) {
     }
   })
   eatRetryTimer = setTimeout(() => {
-    eatRetryTimer = undefined
-    tryAutoEat(currentClient)
-  }, EAT_RETRY_DELAY_MS)
+    finishEatingItem(currentClient)
+  }, EAT_FINISH_DELAY_MS)
 }
 
 function stopAutoEat() {
   clearTimeout(eatRetryTimer)
   eatRetryTimer = undefined
   isAutoEating = false
+}
+
+function finishEatingItem(currentClient) {
+  eatRetryTimer = undefined
+  if (client !== currentClient || currentClient.ended || !isAutoEating) return
+
+  currentClient.write('block_dig', {
+    status: 5,
+    location: { x: 0, y: 0, z: 0 },
+    face: 0,
+    sequence: 0
+  })
+  console.log('Sent finish eating action.')
+  eatRetryTimer = setTimeout(() => {
+    eatRetryTimer = undefined
+    tryAutoEat(currentClient)
+  }, EAT_RETRY_DELAY_MS)
 }
 
 function shouldAutoEat() {
@@ -611,7 +626,7 @@ function updateOffhandFood(item) {
   const previousFood = offhandFood
   inventorySlots[OFFHAND_SLOT] = item
   offhandItemId = item?.itemCount > 0 ? item.itemId : undefined
-  offhandFood = offhandItemId !== undefined ? FOOD_BY_ITEM_ID.get(offhandItemId) : undefined
+  offhandFood = offhandItemId !== undefined ? getFoodByItemId(offhandItemId) : undefined
   if (offhandItemId === previousItemId && offhandFood?.id === previousFood?.id) return
 
   if (offhandFood) {
@@ -662,8 +677,8 @@ function findBestFood() {
     const item = slot === OFFHAND_SLOT && !inventorySlots[slot]
       ? { itemCount: offhandItemId === undefined ? 0 : 1, itemId: offhandItemId }
       : inventorySlots[slot]
-    const food = item?.itemCount > 0 ? FOOD_BY_ITEM_ID.get(item.itemId) : undefined
-    if (!food || UNSAFE_FOOD_NAMES.has(food.name) || food.foodPoints > missingFoodPoints) continue
+    const food = item?.itemCount > 0 ? getFoodByItemId(item.itemId) : undefined
+    if (!food || food.foodPoints > missingFoodPoints) continue
     candidates.push({ slot, food })
   }
   if (
@@ -697,14 +712,25 @@ function logInventoryFoodState() {
     OFFHAND_SLOT
   ]) {
     const item = inventorySlots[slot]
-    const food = item?.itemCount > 0 ? FOOD_BY_ITEM_ID.get(item.itemId) : undefined
-    if (food && !UNSAFE_FOOD_NAMES.has(food.name)) foods.push(`${food.displayName}@${slot}`)
+    const food = item?.itemCount > 0 ? getFoodByItemId(item.itemId) : undefined
+    if (food) foods.push(`${food.displayName}@${slot}`)
   }
 
   const state = foods.join(', ') || 'none recognized'
   if (state === loggedInventoryFoodState) return
   loggedInventoryFoodState = state
   console.log(`Safe food in inventory/offhand: ${state}.`)
+}
+
+function getFoodByItemId(itemId) {
+  return FOOD_BY_ITEM_ID.get(itemId)
+}
+
+function formatItemName(name) {
+  return name
+    .split('_')
+    .map(part => part[0].toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 function moveFoodToHotbar(currentClient, candidate) {
@@ -722,7 +748,7 @@ function moveFoodToHotbar(currentClient, candidate) {
   eatRetryTimer = setTimeout(() => {
     eatRetryTimer = undefined
     tryAutoEat(currentClient)
-  }, EAT_RETRY_DELAY_MS)
+  }, INVENTORY_SWAP_DELAY_MS)
 }
 
 function selectHotbarSlot(currentClient, slot) {
