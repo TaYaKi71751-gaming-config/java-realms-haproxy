@@ -118,6 +118,7 @@ let offhandFood
 let offhandItemId
 let inventoryStateId = 0
 let inventorySlots = []
+let movedFood
 let playerEntityId
 let selectedHotbarSlot = 0
 let isAutoEating = false
@@ -168,6 +169,7 @@ function createProtocolClient() {
   offhandItemId = undefined
   inventoryStateId = 0
   inventorySlots = []
+  movedFood = undefined
   playerEntityId = undefined
   selectedHotbarSlot = 0
   interactionSequence = 0
@@ -611,6 +613,17 @@ function findBestFood() {
   if (foodLevel === undefined) return undefined
 
   const missingFoodPoints = 20 - foodLevel
+  const movedFoodSlot = HOTBAR_FIRST_SLOT + FOOD_SWAP_HOTBAR_INDEX
+  const movedFoodItem = inventorySlots[movedFoodSlot]
+  if (
+    movedFood &&
+    movedFoodItem?.itemCount > 0 &&
+    movedFoodItem.itemId === movedFood.food.id &&
+    movedFood.food.foodPoints <= missingFoodPoints
+  ) {
+    return { slot: movedFoodSlot, food: movedFood.food }
+  }
+
   const candidates = []
   const candidateSlots = [
     ...Array.from(
@@ -635,7 +648,7 @@ function findBestFood() {
 }
 
 function moveFoodToHotbar(currentClient, candidate) {
-  const hotbarSlot = HOTBAR_FIRST_SLOT + FOOD_SWAP_HOTBAR_INDEX
+  movedFood = { sourceSlot: candidate.slot, food: candidate.food }
   console.log(`Moving ${candidate.food.displayName} from inventory slot ${candidate.slot} to hotbar.`)
   currentClient.write('window_click', {
     windowId: 0,
@@ -661,11 +674,28 @@ function selectHotbarSlot(currentClient, slot) {
 function finishAutoEating(currentClient) {
   const wasEating = isAutoEating
   stopAutoEat()
+  restoreMovedFood(currentClient)
   if (!wasEating) return
 
   console.log(`Stopped eating at food level ${foodLevel} to avoid wasting food.`)
   tryAutoSleep(currentClient)
   tryAutoAttack(currentClient)
+}
+
+function restoreMovedFood(currentClient) {
+  if (!movedFood || client !== currentClient || currentClient.ended) return
+
+  console.log(`Returning ${movedFood.food.displayName} to inventory slot ${movedFood.sourceSlot}.`)
+  currentClient.write('window_click', {
+    windowId: 0,
+    stateId: inventoryStateId,
+    slot: movedFood.sourceSlot,
+    mouseButton: FOOD_SWAP_HOTBAR_INDEX,
+    mode: 2,
+    changedSlots: [],
+    cursorItem: undefined
+  })
+  movedFood = undefined
 }
 
 function updateTrackedEntity(packet) {
