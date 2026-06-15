@@ -51,8 +51,7 @@ Set `AUTO_ATTACK_ENABLED=true` to attack the nearest hostile mob within three
 blocks. Set `ATTACK_INTERVAL_MS` to control the interval; the default is one
 second.
 
-Set `AUTO_EAT_OFFHAND_ENABLED=true` to use food held in the offhand whenever
-the missing hunger points are at least that food's recovery amount. For example,
-cooked porkchop restores eight hunger points (four icons), so it is only eaten
-at food level 12 or lower. Automatic attacking and underfoot right-clicking
-pause while the bot eats.
+Set `AUTO_EAT_ENABLED=true` to eat safe food from the offhand, hotbar, or
+inventory whenever its full hunger recovery can be used. The bot chooses the
+largest fitting recovery amount and avoids foods with harmful or unpredictable
+effects. Automatic attacking and underfoot right-clicking pause while it eats.

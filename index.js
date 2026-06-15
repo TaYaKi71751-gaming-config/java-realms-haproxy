@@ -23,9 +23,22 @@ const HOSTILE_ENTITY_IDS = new Set(
   MINECRAFT_DATA.entitiesArray.filter(entity => entity.type === 'hostile').map(entity => entity.id)
 )
 const FOOD_BY_ITEM_ID = new Map(MINECRAFT_DATA.foodsArray.map(food => [food.id, food]))
+const UNSAFE_FOOD_NAMES = new Set([
+  'chicken',
+  'chorus_fruit',
+  'poisonous_potato',
+  'pufferfish',
+  'rotten_flesh',
+  'spider_eye',
+  'suspicious_stew'
+])
 const ATTACK_RANGE_SQUARED = 3 * 3
 const EAT_RETRY_DELAY_MS = 2000
 const OFFHAND_SLOT = 45
+const INVENTORY_FIRST_SLOT = 9
+const HOTBAR_FIRST_SLOT = 36
+const HOTBAR_LAST_SLOT = 44
+const FOOD_SWAP_HOTBAR_INDEX = 8
 
 loadEnvFile(path.join(process.cwd(), '.env'))
 const lastLogin = loadJsonFile(LAST_LOGIN_FILE)
@@ -66,10 +79,10 @@ const attackInterval = parseInteger(
   'ATTACK_INTERVAL_MS',
   Number.MAX_SAFE_INTEGER
 )
-const autoEatOffhandEnabled = parseBoolean(
-  process.env.AUTO_EAT_OFFHAND_ENABLED,
-  false,
-  'AUTO_EAT_OFFHAND_ENABLED'
+const autoEatEnabled = parseBoolean(
+  process.env.AUTO_EAT_ENABLED,
+  parseBoolean(process.env.AUTO_EAT_OFFHAND_ENABLED, false, 'AUTO_EAT_OFFHAND_ENABLED'),
+  'AUTO_EAT_ENABLED'
 )
 const respawnDelay = parseInteger(
   process.env.RESPAWN_DELAY_MS,
@@ -102,6 +115,11 @@ let eatRetryTimer
 let awaitingRespawn = false
 let foodLevel
 let offhandFood
+let offhandItemId
+let inventoryStateId = 0
+let inventorySlots = []
+let playerEntityId
+let selectedHotbarSlot = 0
 let isAutoEating = false
 let interactionSequence = 0
 const hostileEntities = new Map()
@@ -147,6 +165,11 @@ function createProtocolClient() {
   awaitingRespawn = false
   foodLevel = undefined
   offhandFood = undefined
+  offhandItemId = undefined
+  inventoryStateId = 0
+  inventorySlots = []
+  playerEntityId = undefined
+  selectedHotbarSlot = 0
   interactionSequence = 0
   hostileEntities.clear()
 
@@ -193,6 +216,10 @@ function createProtocolClient() {
         name: session.selectedProfile.name
       }
     })
+  })
+
+  currentClient.on('login', (packet) => {
+    playerEntityId = packet.entityId
   })
 
   currentClient.on('playerJoin', () => {
@@ -251,13 +278,27 @@ function createProtocolClient() {
 
   currentClient.on('window_items', (packet) => {
     if (packet.windowId !== 0) return
+    inventoryStateId = packet.stateId
+    inventorySlots = packet.items
     updateOffhandFood(packet.items[OFFHAND_SLOT])
     if (shouldAutoEat()) tryAutoEat(currentClient)
   })
 
   currentClient.on('set_slot', (packet) => {
-    if (packet.windowId !== 0 || packet.slot !== OFFHAND_SLOT) return
-    updateOffhandFood(packet.item)
+    if (packet.windowId !== 0) return
+    inventoryStateId = packet.stateId
+    inventorySlots[packet.slot] = packet.item
+    if (packet.slot === OFFHAND_SLOT) updateOffhandFood(packet.item)
+    if (shouldAutoEat()) tryAutoEat(currentClient)
+    else finishAutoEating(currentClient)
+  })
+
+  currentClient.on('entity_equipment', (packet) => {
+    if (packet.entityId !== playerEntityId) return
+    const offhand = packet.equipments.find(equipment => equipment.slot === 1)
+    if (!offhand) return
+
+    updateOffhandFood(offhand.item)
     if (shouldAutoEat()) tryAutoEat(currentClient)
     else finishAutoEating(currentClient)
   })
@@ -493,7 +534,7 @@ function stopAutoAttack() {
 
 function tryAutoEat(currentClient) {
   if (
-    !autoEatOffhandEnabled ||
+    !autoEatEnabled ||
     client !== currentClient ||
     !position ||
     awaitingRespawn ||
@@ -505,17 +546,27 @@ function tryAutoEat(currentClient) {
   }
   if (eatRetryTimer) return
 
+  const candidate = findBestFood()
+  if (!candidate) return
+
+  if (candidate.slot >= INVENTORY_FIRST_SLOT && candidate.slot < HOTBAR_FIRST_SLOT) {
+    moveFoodToHotbar(currentClient, candidate)
+    return
+  }
+
   if (!isAutoEating) {
     console.log(
-      `Food level is ${foodLevel}; eating ${offhandFood.displayName} from offhand ` +
-      `to restore ${offhandFood.foodPoints} hunger points.`
+      `Food level is ${foodLevel}; eating ${candidate.food.displayName} ` +
+      `to restore ${candidate.food.foodPoints} hunger points.`
     )
   }
   isAutoEating = true
   stopSleepClicks()
   stopAutoAttack()
+  const hand = candidate.slot === OFFHAND_SLOT ? 1 : 0
+  if (hand === 0) selectHotbarSlot(currentClient, candidate.slot - HOTBAR_FIRST_SLOT)
   currentClient.write('use_item', {
-    hand: 1,
+    hand,
     sequence: interactionSequence++,
     rotation: {
       x: position.yaw || 0,
@@ -535,16 +586,75 @@ function stopAutoEat() {
 }
 
 function shouldAutoEat() {
-  return Boolean(
-    autoEatOffhandEnabled &&
-    offhandFood &&
-    foodLevel !== undefined &&
-    20 - foodLevel >= offhandFood.foodPoints
-  )
+  return Boolean(autoEatEnabled && foodLevel !== undefined && findBestFood())
 }
 
 function updateOffhandFood(item) {
-  offhandFood = item?.itemCount > 0 ? FOOD_BY_ITEM_ID.get(item.itemId) : undefined
+  const previousItemId = offhandItemId
+  const previousFood = offhandFood
+  inventorySlots[OFFHAND_SLOT] = item
+  offhandItemId = item?.itemCount > 0 ? item.itemId : undefined
+  offhandFood = offhandItemId !== undefined ? FOOD_BY_ITEM_ID.get(offhandItemId) : undefined
+  if (offhandItemId === previousItemId && offhandFood?.id === previousFood?.id) return
+
+  if (offhandFood) {
+    console.log(
+      `Detected ${offhandFood.displayName} in offhand ` +
+      `(${offhandFood.foodPoints} hunger points).`
+    )
+  } else if (previousFood) {
+    console.log('Offhand no longer contains recognized food.')
+  }
+}
+
+function findBestFood() {
+  if (foodLevel === undefined) return undefined
+
+  const missingFoodPoints = 20 - foodLevel
+  const candidates = []
+  for (let slot = INVENTORY_FIRST_SLOT; slot <= OFFHAND_SLOT; slot++) {
+    const item = slot === OFFHAND_SLOT && !inventorySlots[slot]
+      ? { itemCount: offhandItemId === undefined ? 0 : 1, itemId: offhandItemId }
+      : inventorySlots[slot]
+    const food = item?.itemCount > 0 ? FOOD_BY_ITEM_ID.get(item.itemId) : undefined
+    if (!food || UNSAFE_FOOD_NAMES.has(food.name) || food.foodPoints > missingFoodPoints) continue
+    candidates.push({ slot, food })
+  }
+
+  return candidates.sort((a, b) => {
+    if (a.food.foodPoints !== b.food.foodPoints) return b.food.foodPoints - a.food.foodPoints
+    return foodSlotPriority(a.slot) - foodSlotPriority(b.slot)
+  })[0]
+}
+
+function foodSlotPriority(slot) {
+  if (slot === OFFHAND_SLOT) return 0
+  if (slot >= HOTBAR_FIRST_SLOT) return 1
+  return 2
+}
+
+function moveFoodToHotbar(currentClient, candidate) {
+  const hotbarSlot = HOTBAR_FIRST_SLOT + FOOD_SWAP_HOTBAR_INDEX
+  console.log(`Moving ${candidate.food.displayName} from inventory slot ${candidate.slot} to hotbar.`)
+  currentClient.write('window_click', {
+    windowId: 0,
+    stateId: inventoryStateId,
+    slot: candidate.slot,
+    mouseButton: FOOD_SWAP_HOTBAR_INDEX,
+    mode: 2,
+    changedSlots: [],
+    cursorItem: undefined
+  })
+  eatRetryTimer = setTimeout(() => {
+    eatRetryTimer = undefined
+    tryAutoEat(currentClient)
+  }, EAT_RETRY_DELAY_MS)
+}
+
+function selectHotbarSlot(currentClient, slot) {
+  if (selectedHotbarSlot === slot) return
+  selectedHotbarSlot = slot
+  currentClient.write('held_item_slot', { slotId: slot })
 }
 
 function finishAutoEating(currentClient) {
