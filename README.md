@@ -52,7 +52,8 @@ blocks. Set `ATTACK_INTERVAL_MS` to control the interval; the default is one
 second.
 
 Set `AUTO_EAT_ENABLED=true` to eat safe food stored in the main inventory or
-offhand whenever its full hunger recovery can be used. Existing hotbar food is
-ignored. The bot chooses the largest fitting recovery amount and avoids foods
-with harmful or unpredictable effects. Automatic attacking and underfoot
-right-clicking pause while it eats.
+offhand whenever its full hunger recovery can be used. When the offhand is
+empty, the bot refills it with the largest safe food stack from the main
+inventory. Existing hotbar food is ignored. Automatic attacking and underfoot
+right-clicking pause while it eats. Set `EAT_INTERVAL_MS` to control the delay
+before checking for the next meal; the default is one second.
