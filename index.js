@@ -612,7 +612,14 @@ function findBestFood() {
 
   const missingFoodPoints = 20 - foodLevel
   const candidates = []
-  for (let slot = INVENTORY_FIRST_SLOT; slot <= OFFHAND_SLOT; slot++) {
+  const candidateSlots = [
+    ...Array.from(
+      { length: HOTBAR_FIRST_SLOT - INVENTORY_FIRST_SLOT },
+      (_, index) => INVENTORY_FIRST_SLOT + index
+    ),
+    OFFHAND_SLOT
+  ]
+  for (const slot of candidateSlots) {
     const item = slot === OFFHAND_SLOT && !inventorySlots[slot]
       ? { itemCount: offhandItemId === undefined ? 0 : 1, itemId: offhandItemId }
       : inventorySlots[slot]
@@ -623,14 +630,8 @@ function findBestFood() {
 
   return candidates.sort((a, b) => {
     if (a.food.foodPoints !== b.food.foodPoints) return b.food.foodPoints - a.food.foodPoints
-    return foodSlotPriority(a.slot) - foodSlotPriority(b.slot)
+    return a.slot === OFFHAND_SLOT ? -1 : 1
   })[0]
-}
-
-function foodSlotPriority(slot) {
-  if (slot === OFFHAND_SLOT) return 0
-  if (slot >= HOTBAR_FIRST_SLOT) return 1
-  return 2
 }
 
 function moveFoodToHotbar(currentClient, candidate) {

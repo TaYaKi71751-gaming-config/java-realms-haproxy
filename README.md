@@ -51,7 +51,8 @@ Set `AUTO_ATTACK_ENABLED=true` to attack the nearest hostile mob within three
 blocks. Set `ATTACK_INTERVAL_MS` to control the interval; the default is one
 second.
 
-Set `AUTO_EAT_ENABLED=true` to eat safe food from the offhand, hotbar, or
-inventory whenever its full hunger recovery can be used. The bot chooses the
-largest fitting recovery amount and avoids foods with harmful or unpredictable
-effects. Automatic attacking and underfoot right-clicking pause while it eats.
+Set `AUTO_EAT_ENABLED=true` to eat safe food stored in the main inventory or
+offhand whenever its full hunger recovery can be used. Existing hotbar food is
+ignored. The bot chooses the largest fitting recovery amount and avoids foods
+with harmful or unpredictable effects. Automatic attacking and underfoot
+right-clicking pause while it eats.
