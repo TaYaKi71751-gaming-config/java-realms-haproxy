@@ -39,6 +39,7 @@ const INVENTORY_FIRST_SLOT = 9
 const HOTBAR_FIRST_SLOT = 36
 const HOTBAR_LAST_SLOT = 44
 const FOOD_SWAP_HOTBAR_INDEX = 8
+const UNKNOWN_OFFHAND_FOOD_POINTS = 8
 
 loadEnvFile(path.join(process.cwd(), '.env'))
 const lastLogin = loadJsonFile(LAST_LOGIN_FILE)
@@ -79,9 +80,14 @@ const attackInterval = parseInteger(
   'ATTACK_INTERVAL_MS',
   Number.MAX_SAFE_INTEGER
 )
+const autoEatOffhandEnabled = parseBoolean(
+  process.env.AUTO_EAT_OFFHAND_ENABLED,
+  false,
+  'AUTO_EAT_OFFHAND_ENABLED'
+)
 const autoEatEnabled = parseBoolean(
   process.env.AUTO_EAT_ENABLED,
-  parseBoolean(process.env.AUTO_EAT_OFFHAND_ENABLED, false, 'AUTO_EAT_OFFHAND_ENABLED'),
+  autoEatOffhandEnabled,
   'AUTO_EAT_ENABLED'
 )
 const respawnDelay = parseInteger(
@@ -122,6 +128,7 @@ let movedFood
 let playerEntityId
 let selectedHotbarSlot = 0
 let isAutoEating = false
+let loggedInventoryFoodState
 let interactionSequence = 0
 const hostileEntities = new Map()
 
@@ -172,6 +179,7 @@ function createProtocolClient() {
   movedFood = undefined
   playerEntityId = undefined
   selectedHotbarSlot = 0
+  loggedInventoryFoodState = undefined
   interactionSequence = 0
   hostileEntities.clear()
 
@@ -270,6 +278,7 @@ function createProtocolClient() {
 
   currentClient.on('update_health', (packet) => {
     foodLevel = packet.food
+    console.log(`Food level updated: ${foodLevel}/20.`)
     if (shouldAutoEat()) {
       tryAutoEat(currentClient)
       return
@@ -283,6 +292,7 @@ function createProtocolClient() {
     inventoryStateId = packet.stateId
     inventorySlots = packet.items
     updateOffhandFood(packet.items[OFFHAND_SLOT])
+    logInventoryFoodState()
     if (shouldAutoEat()) tryAutoEat(currentClient)
   })
 
@@ -291,6 +301,7 @@ function createProtocolClient() {
     inventoryStateId = packet.stateId
     inventorySlots[packet.slot] = packet.item
     if (packet.slot === OFFHAND_SLOT) updateOffhandFood(packet.item)
+    logInventoryFoodState()
     if (shouldAutoEat()) tryAutoEat(currentClient)
     else finishAutoEating(currentClient)
   })
@@ -536,7 +547,7 @@ function stopAutoAttack() {
 
 function tryAutoEat(currentClient) {
   if (
-    !autoEatEnabled ||
+    (!autoEatEnabled && !autoEatOffhandEnabled) ||
     client !== currentClient ||
     !position ||
     awaitingRespawn ||
@@ -588,7 +599,11 @@ function stopAutoEat() {
 }
 
 function shouldAutoEat() {
-  return Boolean(autoEatEnabled && foodLevel !== undefined && findBestFood())
+  return Boolean(
+    (autoEatEnabled || autoEatOffhandEnabled) &&
+    foodLevel !== undefined &&
+    findBestFood()
+  )
 }
 
 function updateOffhandFood(item) {
@@ -613,6 +628,17 @@ function findBestFood() {
   if (foodLevel === undefined) return undefined
 
   const missingFoodPoints = 20 - foodLevel
+  if (autoEatOffhandEnabled && missingFoodPoints >= UNKNOWN_OFFHAND_FOOD_POINTS) {
+    return {
+      slot: OFFHAND_SLOT,
+      food: offhandFood || {
+        id: offhandItemId,
+        displayName: 'offhand item',
+        foodPoints: UNKNOWN_OFFHAND_FOOD_POINTS
+      }
+    }
+  }
+
   const movedFoodSlot = HOTBAR_FIRST_SLOT + FOOD_SWAP_HOTBAR_INDEX
   const movedFoodItem = inventorySlots[movedFoodSlot]
   if (
@@ -640,11 +666,45 @@ function findBestFood() {
     if (!food || UNSAFE_FOOD_NAMES.has(food.name) || food.foodPoints > missingFoodPoints) continue
     candidates.push({ slot, food })
   }
+  if (
+    offhandItemId !== undefined &&
+    !offhandFood &&
+    UNKNOWN_OFFHAND_FOOD_POINTS <= missingFoodPoints
+  ) {
+    return {
+      slot: OFFHAND_SLOT,
+      food: {
+        id: offhandItemId,
+        displayName: `Unknown offhand item ${offhandItemId}`,
+        foodPoints: UNKNOWN_OFFHAND_FOOD_POINTS
+      }
+    }
+  }
 
   return candidates.sort((a, b) => {
     if (a.food.foodPoints !== b.food.foodPoints) return b.food.foodPoints - a.food.foodPoints
     return a.slot === OFFHAND_SLOT ? -1 : 1
   })[0]
+}
+
+function logInventoryFoodState() {
+  const foods = []
+  for (const slot of [
+    ...Array.from(
+      { length: HOTBAR_FIRST_SLOT - INVENTORY_FIRST_SLOT },
+      (_, index) => INVENTORY_FIRST_SLOT + index
+    ),
+    OFFHAND_SLOT
+  ]) {
+    const item = inventorySlots[slot]
+    const food = item?.itemCount > 0 ? FOOD_BY_ITEM_ID.get(item.itemId) : undefined
+    if (food && !UNSAFE_FOOD_NAMES.has(food.name)) foods.push(`${food.displayName}@${slot}`)
+  }
+
+  const state = foods.join(', ') || 'none recognized'
+  if (state === loggedInventoryFoodState) return
+  loggedInventoryFoodState = state
+  console.log(`Safe food in inventory/offhand: ${state}.`)
 }
 
 function moveFoodToHotbar(currentClient, candidate) {
