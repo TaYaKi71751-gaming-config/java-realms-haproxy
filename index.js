@@ -35,6 +35,7 @@ const INVENTORY_SWAP_DELAY_MS = 500
 const OFFHAND_SLOT = 45
 const INVENTORY_FIRST_SLOT = 9
 const HOTBAR_FIRST_SLOT = 36
+const HOTBAR_LAST_SLOT = 44
 const FOOD_SWAP_HOTBAR_INDEX = 8
 const OFFHAND_SWAP_BUTTON = 40
 
@@ -664,13 +665,7 @@ function findBestFood() {
   }
 
   const candidates = []
-  for (const slot of [
-    ...Array.from(
-      { length: HOTBAR_FIRST_SLOT - INVENTORY_FIRST_SLOT },
-      (_, index) => INVENTORY_FIRST_SLOT + index
-    ),
-    OFFHAND_SLOT
-  ]) {
+  for (const slot of playerInventorySlots()) {
     const item = inventorySlots[slot]
     const food = item?.itemCount > 0 ? getFoodByItemId(item.itemId) : undefined
     if (!food || food.foodPoints > missingFoodPoints) continue
@@ -685,7 +680,7 @@ function findBestFood() {
 
 function findBestInventoryFood() {
   const candidates = []
-  for (let slot = INVENTORY_FIRST_SLOT; slot < HOTBAR_FIRST_SLOT; slot++) {
+  for (let slot = INVENTORY_FIRST_SLOT; slot <= HOTBAR_LAST_SLOT; slot++) {
     const item = inventorySlots[slot]
     const food = item?.itemCount > 0 ? getFoodByItemId(item.itemId) : undefined
     if (!food) continue
@@ -696,22 +691,32 @@ function findBestInventoryFood() {
 
 function logInventoryFoodState() {
   const foods = []
-  for (const slot of [
-    ...Array.from(
-      { length: HOTBAR_FIRST_SLOT - INVENTORY_FIRST_SLOT },
-      (_, index) => INVENTORY_FIRST_SLOT + index
-    ),
-    OFFHAND_SLOT
-  ]) {
+  const unknownItems = []
+  for (const slot of playerInventorySlots()) {
     const item = inventorySlots[slot]
     const food = item?.itemCount > 0 ? getFoodByItemId(item.itemId) : undefined
     if (food) foods.push(`${food.displayName}@${slot}`)
+    else if (item?.itemCount > 0) unknownItems.push(`${item.itemId}@${slot}`)
   }
 
   const state = foods.join(', ') || 'none recognized'
-  if (state === loggedInventoryFoodState) return
-  loggedInventoryFoodState = state
+  const diagnosticState = `${state}|${unknownItems.join(',')}`
+  if (diagnosticState === loggedInventoryFoodState) return
+  loggedInventoryFoodState = diagnosticState
   console.log(`Safe food in inventory/offhand: ${state}.`)
+  if (!foods.length && unknownItems.length) {
+    console.log(`Inventory item IDs: ${unknownItems.join(', ')}.`)
+  }
+}
+
+function playerInventorySlots() {
+  return [
+    ...Array.from(
+      { length: HOTBAR_LAST_SLOT - INVENTORY_FIRST_SLOT + 1 },
+      (_, index) => INVENTORY_FIRST_SLOT + index
+    ),
+    OFFHAND_SLOT
+  ]
 }
 
 function getFoodByItemId(itemId) {
