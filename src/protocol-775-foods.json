@@ -1,149 +1,149 @@
 {
-  "893": {
+  "894": {
     "name": "apple",
     "foodPoints": 4
   },
-  "947": {
+  "948": {
     "name": "mushroom_stew",
     "foodPoints": 6
   },
-  "953": {
+  "954": {
     "name": "bread",
     "foodPoints": 5
   },
-  "983": {
+  "984": {
     "name": "porkchop",
     "foodPoints": 3
   },
-  "984": {
+  "985": {
     "name": "cooked_porkchop",
     "foodPoints": 8
   },
-  "986": {
+  "987": {
     "name": "golden_apple",
     "foodPoints": 4
   },
-  "987": {
+  "988": {
     "name": "enchanted_golden_apple",
     "foodPoints": 4
   },
-  "1019": {
+  "1020": {
     "name": "pufferfish_bucket",
     "foodPoints": 1
   },
-  "1020": {
+  "1021": {
     "name": "salmon_bucket",
     "foodPoints": 2
   },
-  "1021": {
+  "1022": {
     "name": "cod_bucket",
     "foodPoints": 2
   },
-  "1022": {
+  "1023": {
     "name": "tropical_fish_bucket",
     "foodPoints": 1
   },
-  "1057": {
+  "1058": {
     "name": "cod",
     "foodPoints": 2
   },
-  "1058": {
+  "1059": {
     "name": "salmon",
     "foodPoints": 2
   },
-  "1059": {
+  "1060": {
     "name": "tropical_fish",
     "foodPoints": 1
   },
-  "1061": {
+  "1062": {
     "name": "cooked_cod",
     "foodPoints": 5
   },
-  "1062": {
+  "1063": {
     "name": "cooked_salmon",
     "foodPoints": 6
   },
-  "1102": {
+  "1103": {
     "name": "cookie",
     "foodPoints": 2
   },
-  "1106": {
+  "1107": {
     "name": "melon_slice",
     "foodPoints": 2
   },
-  "1107": {
+  "1108": {
     "name": "dried_kelp",
     "foodPoints": 1
   },
-  "1110": {
+  "1111": {
     "name": "beef",
     "foodPoints": 3
   },
-  "1111": {
+  "1112": {
     "name": "cooked_beef",
     "foodPoints": 8
   },
-  "1113": {
+  "1114": {
     "name": "cooked_chicken",
     "foodPoints": 6
   },
-  "1227": {
+  "1228": {
     "name": "carrot",
     "foodPoints": 3
   },
-  "1228": {
+  "1229": {
     "name": "potato",
     "foodPoints": 1
   },
-  "1229": {
+  "1230": {
     "name": "baked_potato",
     "foodPoints": 5
   },
-  "1232": {
+  "1233": {
     "name": "golden_carrot",
     "foodPoints": 6
   },
-  "1241": {
+  "1242": {
     "name": "pumpkin_pie",
     "foodPoints": 8
   },
-  "1249": {
+  "1250": {
     "name": "rabbit",
     "foodPoints": 3
   },
-  "1250": {
+  "1251": {
     "name": "cooked_rabbit",
     "foodPoints": 5
   },
-  "1251": {
+  "1252": {
     "name": "rabbit_stew",
     "foodPoints": 10
   },
-  "1264": {
+  "1265": {
     "name": "mutton",
     "foodPoints": 2
   },
-  "1265": {
+  "1266": {
     "name": "cooked_mutton",
     "foodPoints": 6
   },
-  "1287": {
+  "1288": {
     "name": "beetroot",
     "foodPoints": 1
   },
-  "1289": {
+  "1290": {
     "name": "beetroot_soup",
     "foodPoints": 6
   },
-  "1373": {
+  "1374": {
     "name": "sweet_berries",
     "foodPoints": 2
   },
-  "1374": {
+  "1375": {
     "name": "glow_berries",
     "foodPoints": 2
   },
-  "1381": {
+  "1382": {
     "name": "honey_bottle",
     "foodPoints": 6
   }
