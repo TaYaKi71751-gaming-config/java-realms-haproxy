@@ -27,6 +27,9 @@ By default, the first open Realm is selected. Set `REALM_ID` or `REALM_NAME`
 to choose a specific Realm. The bot resolves its current endpoint, updates
 HAProxy when it changes, then connects through `127.0.0.1:25565`.
 
+Set `SET_HAPROXY=false` to skip updating HAProxy and connect the bot directly
+to the resolved Realm endpoint. It defaults to `true`.
+
 Use `/pos` to show the latest server position packet and `/quit` to disconnect.
 Chat is disabled until its protocol `775` packet layout is available.
 

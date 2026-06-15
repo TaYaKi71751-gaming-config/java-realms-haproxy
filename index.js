@@ -36,6 +36,7 @@ const realmName = process.env.REALM_NAME
 const proxyHost = process.env.PROXY_HOST || '127.0.0.1'
 const proxyPort = parseInteger(process.env.PROXY_PORT, 25565, 'PROXY_PORT', 65535)
 const haproxyConfig = process.env.HAPROXY_CONFIG || '/etc/haproxy/haproxy.cfg'
+const setHAProxy = parseBoolean(process.env.SET_HAPROXY, true, 'SET_HAPROXY')
 const reconnectDelay = parseInteger(
   process.env.RECONNECT_DELAY_MS,
   5000,
@@ -163,12 +164,20 @@ function createProtocolClient() {
       // createClient derives 774 from CODEC_VERSION. Override it immediately
       // before setProtocol writes the handshake packet.
       options.protocolVersion = PROTOCOL_VERSION
-      ensureHAProxyTarget(options.host, options.port)
-      console.log(
-        `Connecting bot to Realm "${selectedRealm.name}" through ` +
-        `${proxyHost}:${proxyPort}...`
-      )
-      protocolClient.setSocket(net.connect(proxyPort, proxyHost))
+      if (setHAProxy) {
+        ensureHAProxyTarget(options.host, options.port)
+        console.log(
+          `Connecting bot to Realm "${selectedRealm.name}" through ` +
+          `${proxyHost}:${proxyPort}...`
+        )
+        protocolClient.setSocket(net.connect(proxyPort, proxyHost))
+      } else {
+        console.log(
+          `Connecting bot directly to Realm "${selectedRealm.name}" at ` +
+          `${options.host}:${options.port}...`
+        )
+        protocolClient.setSocket(net.connect(options.port, options.host))
+      }
     },
     onMsaCode: printMicrosoftCode
   }
