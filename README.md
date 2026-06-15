@@ -43,3 +43,7 @@ right-click the block directly under its feet whenever connected. Set
 Set `AUTO_RESPAWN_ENABLED=true` to automatically request respawn when the bot
 dies. The request is sent after 500 milliseconds by default; set
 `RESPAWN_DELAY_MS` to change the delay.
+
+Set `AUTO_ATTACK_ENABLED=true` to attack the nearest hostile mob within three
+blocks. Set `ATTACK_INTERVAL_MS` to control the interval; the default is one
+second.

@@ -16,8 +16,13 @@ const PROTOCOL_VERSION = 775
 const CODEC_VERSION = '1.21.11'
 const AUTH_FOLDER = path.join(process.cwd(), 'msa_cache')
 const LAST_LOGIN_FILE = path.join(AUTH_FOLDER, 'last-login.json')
-const CUSTOM_PACKETS = createProtocol775Packets(require('minecraft-data')(CODEC_VERSION))
+const MINECRAFT_DATA = require('minecraft-data')(CODEC_VERSION)
+const CUSTOM_PACKETS = createProtocol775Packets(MINECRAFT_DATA)
 const IP_CACHE_FILE = path.join(process.cwd(), 'last_ip.txt')
+const HOSTILE_ENTITY_IDS = new Set(
+  MINECRAFT_DATA.entitiesArray.filter(entity => entity.type === 'hostile').map(entity => entity.id)
+)
+const ATTACK_RANGE_SQUARED = 3 * 3
 
 loadEnvFile(path.join(process.cwd(), '.env'))
 const lastLogin = loadJsonFile(LAST_LOGIN_FILE)
@@ -46,6 +51,17 @@ const autoRespawnEnabled = parseBoolean(
   false,
   'AUTO_RESPAWN_ENABLED'
 )
+const autoAttackEnabled = parseBoolean(
+  process.env.AUTO_ATTACK_ENABLED,
+  false,
+  'AUTO_ATTACK_ENABLED'
+)
+const attackInterval = parseInteger(
+  process.env.ATTACK_INTERVAL_MS,
+  1000,
+  'ATTACK_INTERVAL_MS',
+  Number.MAX_SAFE_INTEGER
+)
 const respawnDelay = parseInteger(
   process.env.RESPAWN_DELAY_MS,
   500,
@@ -72,8 +88,10 @@ let exitAfterDisconnect = false
 let failureExitTimer
 let sleepClickTimer
 let respawnTimer
+let attackTimer
 let awaitingRespawn = false
 let interactionSequence = 0
+const hostileEntities = new Map()
 
 function installTimestampedConsole() {
   for (const method of ['log', 'info', 'warn', 'error', 'debug']) {
@@ -109,10 +127,12 @@ function createProtocolClient() {
   sentPlayerLoaded = false
   position = undefined
   stopSleepClicks()
+  stopAutoAttack()
   clearTimeout(respawnTimer)
   respawnTimer = undefined
   awaitingRespawn = false
   interactionSequence = 0
+  hostileEntities.clear()
 
   const options = {
     username,
@@ -189,6 +209,31 @@ function createProtocolClient() {
       currentClient.writeRaw(Buffer.from([0x2c]))
     }
     tryAutoSleep(currentClient)
+    tryAutoAttack(currentClient)
+  })
+
+  currentClient.on('spawn_entity', (packet) => {
+    if (!HOSTILE_ENTITY_IDS.has(packet.type)) return
+    hostileEntities.set(packet.entityId, { x: packet.x, y: packet.y, z: packet.z })
+  })
+
+  currentClient.on('rel_entity_move', updateTrackedEntity)
+  currentClient.on('entity_move_look', updateTrackedEntity)
+
+  currentClient.on('entity_teleport', (packet) => {
+    const entity = hostileEntities.get(packet.entityId)
+    if (!entity) return
+    Object.assign(entity, { x: packet.x, y: packet.y, z: packet.z })
+  })
+
+  currentClient.on('sync_entity_position', (packet) => {
+    const entity = hostileEntities.get(packet.entityId)
+    if (!entity) return
+    Object.assign(entity, { x: packet.x, y: packet.y, z: packet.z })
+  })
+
+  currentClient.on('entity_destroy', (packet) => {
+    for (const entityId of packet.entityIds) hostileEntities.delete(entityId)
   })
 
   currentClient.on('death_combat_event', (packet) => {
@@ -197,6 +242,7 @@ function createProtocolClient() {
     awaitingRespawn = true
     position = undefined
     stopSleepClicks()
+    stopAutoAttack()
     console.log(`Player died: ${formatComponent(packet.message)}.`)
     if (!autoRespawnEnabled) return
 
@@ -250,6 +296,8 @@ function createProtocolClient() {
     connectedAt = undefined
     client = undefined
     stopSleepClicks()
+    stopAutoAttack()
+    hostileEntities.clear()
     clearTimeout(respawnTimer)
     respawnTimer = undefined
     if (exitAfterDisconnect) {
@@ -350,6 +398,54 @@ function stopSleepClicks() {
   sleepClickTimer = undefined
 }
 
+function tryAutoAttack(currentClient) {
+  if (!autoAttackEnabled || client !== currentClient || !position) {
+    stopAutoAttack()
+    return
+  }
+  if (attackTimer) return
+
+  attackNearestHostile(currentClient)
+  attackTimer = setInterval(() => attackNearestHostile(currentClient), attackInterval)
+}
+
+function attackNearestHostile(currentClient) {
+  if (client !== currentClient || !position || awaitingRespawn) {
+    stopAutoAttack()
+    return
+  }
+
+  let nearestId
+  let nearestDistance = ATTACK_RANGE_SQUARED
+  for (const [entityId, entity] of hostileEntities) {
+    const distance =
+      (entity.x - position.x) ** 2 +
+      (entity.y - position.y) ** 2 +
+      (entity.z - position.z) ** 2
+    if (distance > nearestDistance) continue
+    nearestId = entityId
+    nearestDistance = distance
+  }
+  if (nearestId === undefined) return
+
+  currentClient.write('attack', { target: nearestId })
+  currentClient.write('arm_animation', { hand: 0 })
+  console.log(`Attacked nearby hostile entity ${nearestId}.`)
+}
+
+function stopAutoAttack() {
+  clearInterval(attackTimer)
+  attackTimer = undefined
+}
+
+function updateTrackedEntity(packet) {
+  const entity = hostileEntities.get(packet.entityId)
+  if (!entity) return
+  entity.x += packet.dX / 4096
+  entity.y += packet.dY / 4096
+  entity.z += packet.dZ / 4096
+}
+
 function updatePosition(current, packet) {
   const flags = packet.flags || {}
   return {
@@ -428,6 +524,7 @@ function stopAfterFailure(currentClient, reason) {
   clearTimeout(reconnectTimer)
   reconnectTimer = undefined
   stopSleepClicks()
+  stopAutoAttack()
   clearTimeout(respawnTimer)
   respawnTimer = undefined
   terminal.close()
@@ -555,6 +652,7 @@ function shutdown() {
   shuttingDown = true
   clearTimeout(reconnectTimer)
   stopSleepClicks()
+  stopAutoAttack()
   clearTimeout(respawnTimer)
   terminal.close()
   client?.end('Bot shutting down')

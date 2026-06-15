@@ -7,9 +7,28 @@ const decodedPlayPackets = new Set([
   'keep_alive',
   'login',
   'death_combat_event',
+  'entity_destroy',
+  'entity_move_look',
+  'entity_teleport',
   'position',
-  'start_configuration'
+  'rel_entity_move',
+  'spawn_entity',
+  'start_configuration',
+  'sync_entity_position'
 ])
+
+const customPacketTypes = {
+  play: {
+    toServer: {
+      attack: [
+        'container',
+        [
+          { name: 'target', type: 'varint' }
+        ]
+      ]
+    }
+  }
+}
 
 const aliases = {
   configuration: {
@@ -198,17 +217,18 @@ module.exports = function createProtocol775Packets(mcData) {
       for (const [resourceName, packet] of Object.entries(report[state][reportDirection])) {
         const officialName = resourceName.slice('minecraft:'.length)
         const alias = aliases[state]?.[direction]?.[officialName] || officialName
+        const customPacketType = customPacketTypes[state]?.[direction]?.[officialName]
         const decodeKnownPacket =
           knownNames.has(alias) &&
           (state !== 'play' || direction !== 'toClient' || decodedPlayPackets.has(alias))
-        const name = decodeKnownPacket ? alias : unknownName(officialName)
+        const name = decodeKnownPacket || customPacketType ? alias : unknownName(officialName)
 
         mappings[`0x${packet.protocol_id.toString(16).padStart(2, '0')}`] = name
-        if (!decodeKnownPacket) {
-          types[`packet_${name}`] = [
-            'container',
-            [{ name: 'data', type: 'restBuffer' }]
-          ]
+        if (customPacketType) {
+          types[`packet_${name}`] = customPacketType
+          unknownFields[name] = `packet_${name}`
+        } else if (!decodeKnownPacket) {
+          types[`packet_${name}`] = ['container', [{ name: 'data', type: 'restBuffer' }]]
           unknownFields[name] = `packet_${name}`
         }
       }
