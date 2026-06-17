@@ -101,11 +101,9 @@ const respawnDelay = parseInteger(
   'RESPAWN_DELAY_MS',
   Number.MAX_SAFE_INTEGER
 )
-const FAILURE_EXIT_TIMEOUT_MS = 2000
 
 if (!username) {
-  console.error('BOT_EMAIL is required. Set it in .env.')
-  process.exit(1)
+  exitWithConfiguredDelay('BOT_EMAIL is required. Set it in .env.')
 }
 
 let client
@@ -419,9 +417,8 @@ function createProtocolClient() {
     clearTimeout(respawnTimer)
     respawnTimer = undefined
     if (exitAfterDisconnect) {
-      clearTimeout(failureExitTimer)
-      console.log('Exiting process after connection failure.')
-      process.exit(1)
+      scheduleFailureExit('connection failure')
+      return
     }
     if (!shuttingDown) scheduleReconnect()
   })
@@ -923,12 +920,20 @@ function stopAfterFailure(currentClient, reason) {
   respawnTimer = undefined
   terminal.close()
 
-  failureExitTimer = setTimeout(() => {
-    console.error('Client did not close cleanly; forcing process exit.')
-    process.exit(1)
-  }, FAILURE_EXIT_TIMEOUT_MS)
+  scheduleFailureExit(reason)
 
   if (!currentClient.ended) currentClient.end(reason)
+}
+
+function scheduleFailureExit(reason) {
+  if (failureExitTimer) return
+
+  console.log(`Exiting process in ${reconnectDelay}ms after ${reason}.`)
+  failureExitTimer = setTimeout(() => {
+    failureExitTimer = undefined
+    console.log('Exiting process after connection failure.')
+    process.exit(1)
+  }, reconnectDelay)
 }
 
 function printMicrosoftCode(data) {
@@ -973,8 +978,7 @@ function parseInteger(value, fallback, name, maximum) {
 
   const parsed = Number.parseInt(value, 10)
   if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maximum) {
-    console.error(`${name} must be an integer from 0 to ${maximum}.`)
-    process.exit(1)
+    exitWithConfiguredDelay(`${name} must be an integer from 0 to ${maximum}.`)
   }
   return parsed
 }
@@ -986,8 +990,26 @@ function parseBoolean(value, fallback, name) {
   if (normalized === 'true') return true
   if (normalized === 'false') return false
 
-  console.error(`${name} must be true or false.`)
+  exitWithConfiguredDelay(`${name} must be true or false.`)
+}
+
+function exitWithConfiguredDelay(message) {
+  console.error(message)
+  const delay = getConfiguredExitDelay()
+  console.log(`Exiting process in ${delay}ms.`)
+  waitSynchronously(delay)
   process.exit(1)
+}
+
+function getConfiguredExitDelay() {
+  const parsed = Number.parseInt(process.env.RECONNECT_DELAY_MS || '5000', 10)
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return 5000
+  return parsed
+}
+
+function waitSynchronously(delay) {
+  if (delay <= 0) return
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay)
 }
 
 function loadEnvFile(filename) {
