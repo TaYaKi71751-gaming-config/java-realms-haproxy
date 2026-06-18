@@ -6,7 +6,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js && node --check src/protocol-775.js"
+    "check": "node --check index.js && node --check src/protocol-776.js"
   },
   "engines": {
     "node": ">=18"

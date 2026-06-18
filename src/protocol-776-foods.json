@@ -7,10 +7,6 @@
     "name": "mushroom_stew",
     "foodPoints": 6
   },
-  "954": {
-    "name": "bread",
-    "foodPoints": 5
-  },
   "984": {
     "name": "porkchop",
     "foodPoints": 3
@@ -26,6 +22,10 @@
   "988": {
     "name": "enchanted_golden_apple",
     "foodPoints": 4
+  },
+  "1012": {
+    "name": "cooked_porkchop",
+    "foodPoints": 8
   },
   "1020": {
     "name": "pufferfish_bucket",

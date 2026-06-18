@@ -1,6 +1,6 @@
 'use strict'
 
-const report = require('./protocol-775-packets.json')
+const report = require('./protocol-776-packets.json')
 
 const decodedPlayPackets = new Set([
   'kick_disconnect',
@@ -12,6 +12,8 @@ const decodedPlayPackets = new Set([
   'entity_move_look',
   'entity_teleport',
   'position',
+  'player_info',
+  'player_remove',
   'rel_entity_move',
   'set_slot',
   'spawn_entity',
@@ -202,7 +204,7 @@ const aliases = {
   }
 }
 
-module.exports = function createProtocol775Packets(mcData) {
+module.exports = function createProtocol776Packets(mcData) {
   const custom = { [mcData.version.majorVersion]: {} }
 
   for (const [state, directions] of Object.entries({
@@ -259,5 +261,5 @@ module.exports = function createProtocol775Packets(mcData) {
 }
 
 function unknownName(name) {
-  return `protocol_775_${name.replaceAll('/', '_')}`
+  return `protocol_776_${name.replaceAll('/', '_')}`
 }

@@ -5,7 +5,7 @@ authenticated online bot through that proxy.
 
 The online bot behavior is migrated from
 [`TaYaKi71751/minecraft-java-online-bot`](https://github.com/TaYaKi71751/minecraft-java-online-bot).
-It uses the Minecraft Java `26.1.2` protocol ID `775`, acknowledges the packets
+It uses the Minecraft Java `26.2` protocol ID `776`, acknowledges the packets
 needed to remain connected, and reconnects after unexpected socket closures.
 
 ## Setup
@@ -31,7 +31,7 @@ Set `SET_HAPROXY=false` to skip updating HAProxy and connect the bot directly
 to the resolved Realm endpoint. It defaults to `true`.
 
 Use `/pos` to show the latest server position packet and `/quit` to disconnect.
-Chat is disabled until its protocol `775` packet layout is available.
+Chat is disabled until its protocol `776` packet layout is available.
 
 Kicks, server disconnect packets, and protocol errors exit with status `1`.
 Unexpected socket closures reconnect automatically. A process manager such as

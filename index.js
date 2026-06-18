@@ -8,23 +8,23 @@ const path = require('node:path')
 const readline = require('node:readline')
 const { execFileSync } = require('node:child_process')
 const mc = require('minecraft-protocol')
-const createProtocol775Packets = require('./src/protocol-775')
-const protocol775Foods = require('./src/protocol-775-foods.json')
+const createProtocol776Packets = require('./src/protocol-776')
+const protocol776Foods = require('./src/protocol-776-foods.json')
 
-const PROTOCOL_VERSION = 775
-// minecraft-protocol has not published a named 26.1.2 codec yet. Protocol 774
-// is the closest packet schema; the handshake below is always overridden to 775.
+const PROTOCOL_VERSION = 776
+// minecraft-protocol has not published a named 26.2 codec yet. Protocol 774
+// is the closest installed packet schema; the handshake below is overridden to 776.
 const CODEC_VERSION = '1.21.11'
 const AUTH_FOLDER = path.join(process.cwd(), 'msa_cache')
 const LAST_LOGIN_FILE = path.join(AUTH_FOLDER, 'last-login.json')
 const MINECRAFT_DATA = require('minecraft-data')(CODEC_VERSION)
-const CUSTOM_PACKETS = createProtocol775Packets(MINECRAFT_DATA)
+const CUSTOM_PACKETS = createProtocol776Packets(MINECRAFT_DATA)
 const IP_CACHE_FILE = path.join(process.cwd(), 'last_ip.txt')
 const HOSTILE_ENTITY_IDS = new Set(
   MINECRAFT_DATA.entitiesArray.filter(entity => entity.type === 'hostile').map(entity => entity.id)
 )
 const FOOD_BY_ITEM_ID = new Map(
-  Object.entries(protocol775Foods).map(([id, food]) => [
+  Object.entries(protocol776Foods).map(([id, food]) => [
     Number(id),
     { ...food, id: Number(id), displayName: formatItemName(food.name) }
   ])
@@ -370,7 +370,7 @@ function createProtocolClient() {
     }, respawnDelay)
   })
 
-  currentClient.on('protocol_775_chunk_batch_finished', () => {
+  currentClient.on('protocol_776_chunk_batch_finished', () => {
     currentClient.write('chunk_batch_received', { chunksPerTick: 10 })
   })
 
@@ -1057,7 +1057,7 @@ terminal.on('line', (line) => {
   } else if (input === '/pos') {
     console.log(position || 'The server has not sent a position packet yet.')
   } else if (client?.chat) {
-    console.log('Chat is disabled until its protocol 775 packet layout is available.')
+    console.log('Chat is disabled until its protocol 776 packet layout is available.')
   } else {
     console.log('The bot has not entered the play state yet.')
   }
