@@ -23,13 +23,19 @@ const IP_CACHE_FILE = path.join(process.cwd(), 'last_ip.txt')
 const HOSTILE_ENTITY_IDS = new Set(
   MINECRAFT_DATA.entitiesArray.filter(entity => entity.type === 'hostile').map(entity => entity.id)
 )
+const ENTITY_BY_ID = new Map(MINECRAFT_DATA.entitiesArray.map(entity => [entity.id, entity]))
+const KNOWN_ENTITY_IDS = new Set(MINECRAFT_DATA.entitiesArray.map(entity => entity.id))
+const NON_ATTACKABLE_ENTITY_IDS = new Set(
+  MINECRAFT_DATA.entitiesArray
+    .filter(entity => entity.type === 'other' || entity.type === 'projectile')
+    .map(entity => entity.id)
+)
 const FOOD_BY_ITEM_ID = new Map(
   Object.entries(protocol776Foods).map(([id, food]) => [
     Number(id),
     { ...food, id: Number(id), displayName: formatItemName(food.name) }
   ])
 )
-const ATTACK_RANGE_SQUARED = 3 * 3
 const EAT_FINISH_DELAY_MS = 1700
 const INVENTORY_SWAP_DELAY_MS = 500
 const OFFHAND_SLOT = 45
@@ -78,6 +84,23 @@ const attackInterval = parseInteger(
   1000,
   'ATTACK_INTERVAL_MS',
   Number.MAX_SAFE_INTEGER
+)
+const attackRange = parseInteger(
+  process.env.AUTO_ATTACK_RANGE_BLOCKS,
+  3,
+  'AUTO_ATTACK_RANGE_BLOCKS',
+  Number.MAX_SAFE_INTEGER
+)
+const attackRangeSquared = attackRange * attackRange
+const autoAttackAllEntities = parseBoolean(
+  process.env.AUTO_ATTACK_ALL_ENTITIES,
+  false,
+  'AUTO_ATTACK_ALL_ENTITIES'
+)
+const autoAttackUnrecognizedEntities = parseBoolean(
+  process.env.AUTO_ATTACK_UNRECOGNIZED_ENTITIES,
+  PROTOCOL_VERSION !== MINECRAFT_DATA.version.version,
+  'AUTO_ATTACK_UNRECOGNIZED_ENTITIES'
 )
 const autoEatOffhandEnabled = parseBoolean(
   process.env.AUTO_EAT_OFFHAND_ENABLED,
@@ -135,7 +158,9 @@ let isAutoEating = false
 let unknownOffhandAttemptedAtFoodLevel
 let loggedInventoryFoodState
 let interactionSequence = 0
+let loggedAutoAttackNoTargets = false
 const hostileEntities = new Map()
+const loggedIgnoredAttackEntityTypes = new Set()
 
 function installTimestampedConsole() {
   for (const method of ['log', 'info', 'warn', 'error', 'debug']) {
@@ -188,6 +213,8 @@ function createProtocolClient() {
   unknownOffhandAttemptedAtFoodLevel = undefined
   loggedInventoryFoodState = undefined
   interactionSequence = 0
+  loggedAutoAttackNoTargets = false
+  loggedIgnoredAttackEntityTypes.clear()
   hostileEntities.clear()
 
   const options = {
@@ -327,8 +354,18 @@ function createProtocolClient() {
   })
 
   currentClient.on('spawn_entity', (packet) => {
-    if (!HOSTILE_ENTITY_IDS.has(packet.type)) return
-    hostileEntities.set(packet.entityId, { x: packet.x, y: packet.y, z: packet.z })
+    if (!isAutoAttackTarget(packet)) {
+      logIgnoredAutoAttackEntity(packet)
+      return
+    }
+    loggedAutoAttackNoTargets = false
+    hostileEntities.set(packet.entityId, {
+      x: packet.x,
+      y: packet.y,
+      z: packet.z,
+      type: packet.type
+    })
+    console.log(`Tracking auto-attack target entity ${packet.entityId} (type ${packet.type}).`)
   })
 
   currentClient.on('rel_entity_move', updateTrackedEntity)
@@ -532,26 +569,97 @@ function attackNearestHostile(currentClient) {
   }
 
   let nearestId
-  let nearestDistance = ATTACK_RANGE_SQUARED
+  let nearestEntity
+  let nearestDistance = Infinity
   for (const [entityId, entity] of hostileEntities) {
     const distance =
       (entity.x - position.x) ** 2 +
       (entity.y - position.y) ** 2 +
       (entity.z - position.z) ** 2
-    if (distance > nearestDistance) continue
+    if (distance >= nearestDistance) continue
     nearestId = entityId
+    nearestEntity = entity
     nearestDistance = distance
   }
-  if (nearestId === undefined) return
+  if (nearestId === undefined) {
+    logAutoAttackNoTargets(undefined)
+    return
+  }
+  if (nearestDistance > attackRangeSquared) {
+    logAutoAttackNoTargets(Math.sqrt(nearestDistance))
+    return
+  }
 
+  const look = getLookAtEntity(nearestEntity)
+  currentClient.write('look', {
+    yaw: look.yaw,
+    pitch: look.pitch,
+    flags: {
+      onGround: true,
+      hasHorizontalCollision: false
+    }
+  })
+  position.yaw = look.yaw
+  position.pitch = look.pitch
   currentClient.write('attack', { target: nearestId })
   currentClient.write('arm_animation', { hand: 0 })
-  console.log(`Attacked nearby hostile entity ${nearestId}.`)
+  console.log(
+    `Aimed at and attacked nearby entity ${nearestId} ` +
+    `(type ${nearestEntity.type}, yaw ${look.yaw.toFixed(1)}, pitch ${look.pitch.toFixed(1)}).`
+  )
 }
 
 function stopAutoAttack() {
   clearInterval(attackTimer)
   attackTimer = undefined
+}
+
+function getLookAtEntity(entity) {
+  const eyeY = position.y + 1.62
+  const targetY = entity.y + 1
+  const dx = entity.x - position.x
+  const dy = targetY - eyeY
+  const dz = entity.z - position.z
+  const horizontalDistance = Math.sqrt(dx * dx + dz * dz)
+
+  return {
+    yaw: Math.atan2(-dx, dz) * 180 / Math.PI,
+    pitch: -Math.atan2(dy, horizontalDistance) * 180 / Math.PI
+  }
+}
+
+function isAutoAttackTarget(packet) {
+  if (NON_ATTACKABLE_ENTITY_IDS.has(packet.type)) return false
+  if (autoAttackAllEntities) return true
+  if (HOSTILE_ENTITY_IDS.has(packet.type)) return true
+  return autoAttackUnrecognizedEntities && !KNOWN_ENTITY_IDS.has(packet.type)
+}
+
+function logIgnoredAutoAttackEntity(packet) {
+  if (!autoAttackEnabled || loggedIgnoredAttackEntityTypes.has(packet.type)) return
+  if (loggedIgnoredAttackEntityTypes.size >= 30) return
+
+  loggedIgnoredAttackEntityTypes.add(packet.type)
+  const knownEntity = ENTITY_BY_ID.get(packet.type)
+  const name = knownEntity ? `${knownEntity.name}/${knownEntity.displayName}` : 'unknown in codec'
+  const reason = NON_ATTACKABLE_ENTITY_IDS.has(packet.type)
+    ? ' because it is not attackable'
+    : `; set AUTO_ATTACK_ALL_ENTITIES=true to target this type`
+  console.log(`Auto attack ignored spawned entity type ${packet.type} (${name})${reason}.`)
+}
+
+function logAutoAttackNoTargets(nearestDistance) {
+  if (loggedAutoAttackNoTargets) return
+  loggedAutoAttackNoTargets = true
+  if (nearestDistance === undefined) {
+    console.log('Auto attack is active, but no target entities are tracked yet.')
+    return
+  }
+
+  console.log(
+    `Auto attack is active; nearest target is ${nearestDistance.toFixed(1)} blocks away, ` +
+    `outside AUTO_ATTACK_RANGE_BLOCKS=${attackRange}.`
+  )
 }
 
 function tryAutoEat(currentClient) {
