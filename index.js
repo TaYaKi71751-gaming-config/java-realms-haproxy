@@ -79,6 +79,11 @@ const autoAttackEnabled = parseBoolean(
   false,
   'AUTO_ATTACK_ENABLED'
 )
+const autoAimEnabled = parseBoolean(
+  process.env.AUTO_AIM_ENABLED,
+  false,
+  'AUTO_AIM_ENABLED'
+)
 const attackInterval = parseInteger(
   process.env.ATTACK_INTERVAL_MS,
   1000,
@@ -552,7 +557,12 @@ function stopSleepClicks() {
 }
 
 function tryAutoAttack(currentClient) {
-  if (!autoAttackEnabled || isAutoEating || client !== currentClient || !position) {
+  if (
+    (!autoAttackEnabled && !autoAimEnabled) ||
+    isAutoEating ||
+    client !== currentClient ||
+    !position
+  ) {
     stopAutoAttack()
     return
   }
@@ -601,6 +611,14 @@ function attackNearestHostile(currentClient) {
   })
   position.yaw = look.yaw
   position.pitch = look.pitch
+  if (!autoAttackEnabled) {
+    console.log(
+      `Aimed at nearby entity ${nearestId} ` +
+      `(type ${nearestEntity.type}, yaw ${look.yaw.toFixed(1)}, pitch ${look.pitch.toFixed(1)}).`
+    )
+    return
+  }
+
   currentClient.write('attack', { target: nearestId })
   currentClient.write('arm_animation', { hand: 0 })
   console.log(
@@ -636,7 +654,10 @@ function isAutoAttackTarget(packet) {
 }
 
 function logIgnoredAutoAttackEntity(packet) {
-  if (!autoAttackEnabled || loggedIgnoredAttackEntityTypes.has(packet.type)) return
+  if (
+    (!autoAttackEnabled && !autoAimEnabled) ||
+    loggedIgnoredAttackEntityTypes.has(packet.type)
+  ) return
   if (loggedIgnoredAttackEntityTypes.size >= 30) return
 
   loggedIgnoredAttackEntityTypes.add(packet.type)
@@ -651,13 +672,14 @@ function logIgnoredAutoAttackEntity(packet) {
 function logAutoAttackNoTargets(nearestDistance) {
   if (loggedAutoAttackNoTargets) return
   loggedAutoAttackNoTargets = true
+  const action = autoAttackEnabled ? 'Auto attack' : 'Auto aim'
   if (nearestDistance === undefined) {
-    console.log('Auto attack is active, but no target entities are tracked yet.')
+    console.log(`${action} is active, but no target entities are tracked yet.`)
     return
   }
 
   console.log(
-    `Auto attack is active; nearest target is ${nearestDistance.toFixed(1)} blocks away, ` +
+    `${action} is active; nearest target is ${nearestDistance.toFixed(1)} blocks away, ` +
     `outside AUTO_ATTACK_RANGE_BLOCKS=${attackRange}.`
   )
 }
