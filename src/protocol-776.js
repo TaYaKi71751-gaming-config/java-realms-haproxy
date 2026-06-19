@@ -11,6 +11,7 @@ const decodedPlayPackets = new Set([
   'entity_equipment',
   'entity_move_look',
   'entity_teleport',
+  'experience',
   'position',
   'player_info',
   'player_remove',

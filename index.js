@@ -158,6 +158,7 @@ let inventoryStateId = 0
 let inventorySlots = []
 let movedFood
 let playerEntityId
+let experienceLevel
 let selectedHotbarSlot = 0
 let isAutoEating = false
 let unknownOffhandAttemptedAtFoodLevel
@@ -215,6 +216,7 @@ function createProtocolClient() {
   movedFood = undefined
   selectedHotbarSlot = 0
   playerEntityId = undefined
+  experienceLevel = undefined
   unknownOffhandAttemptedAtFoodLevel = undefined
   loggedInventoryFoodState = undefined
   interactionSequence = 0
@@ -324,6 +326,17 @@ function createProtocolClient() {
     }
 
     finishAutoEating(currentClient)
+  })
+
+  currentClient.on('experience', (packet) => {
+    const previousLevel = experienceLevel
+    experienceLevel = packet.level
+    if (previousLevel !== undefined && packet.level > previousLevel) {
+      console.log(
+        `Experience level up: ${previousLevel} -> ${packet.level} ` +
+        `(total XP ${packet.totalExperience}).`
+      )
+    }
   })
 
   currentClient.on('window_items', (packet) => {
