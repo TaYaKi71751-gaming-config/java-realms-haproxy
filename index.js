@@ -600,17 +600,7 @@ function attackNearestHostile(currentClient) {
     return
   }
 
-  const look = getLookAtEntity(nearestEntity)
-  currentClient.write('look', {
-    yaw: look.yaw,
-    pitch: look.pitch,
-    flags: {
-      onGround: true,
-      hasHorizontalCollision: false
-    }
-  })
-  position.yaw = look.yaw
-  position.pitch = look.pitch
+  const look = autoAimEnabled ? aimAtEntity(currentClient, nearestEntity) : undefined
   if (!autoAttackEnabled) {
     console.log(
       `Aimed at nearby entity ${nearestId} ` +
@@ -621,10 +611,14 @@ function attackNearestHostile(currentClient) {
 
   currentClient.write('attack', { target: nearestId })
   currentClient.write('arm_animation', { hand: 0 })
-  console.log(
-    `Aimed at and attacked nearby entity ${nearestId} ` +
-    `(type ${nearestEntity.type}, yaw ${look.yaw.toFixed(1)}, pitch ${look.pitch.toFixed(1)}).`
-  )
+  if (look) {
+    console.log(
+      `Aimed at and attacked nearby entity ${nearestId} ` +
+      `(type ${nearestEntity.type}, yaw ${look.yaw.toFixed(1)}, pitch ${look.pitch.toFixed(1)}).`
+    )
+  } else {
+    console.log(`Attacked nearby entity ${nearestId} (type ${nearestEntity.type}) without auto aim.`)
+  }
 }
 
 function stopAutoAttack() {
@@ -644,6 +638,21 @@ function getLookAtEntity(entity) {
     yaw: Math.atan2(-dx, dz) * 180 / Math.PI,
     pitch: -Math.atan2(dy, horizontalDistance) * 180 / Math.PI
   }
+}
+
+function aimAtEntity(currentClient, entity) {
+  const look = getLookAtEntity(entity)
+  currentClient.write('look', {
+    yaw: look.yaw,
+    pitch: look.pitch,
+    flags: {
+      onGround: true,
+      hasHorizontalCollision: false
+    }
+  })
+  position.yaw = look.yaw
+  position.pitch = look.pitch
+  return look
 }
 
 function isAutoAttackTarget(packet) {
