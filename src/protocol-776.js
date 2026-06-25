@@ -8,7 +8,6 @@ const decodedPlayPackets = new Set([
   'login',
   'death_combat_event',
   'entity_destroy',
-  'entity_equipment',
   'entity_move_look',
   'entity_teleport',
   'experience',
